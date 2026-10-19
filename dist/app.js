@@ -13,7 +13,9 @@ const labels = {
 };
 
 const routes = {
-  queue: ['▤', 'Tạo bài'],
+  create_posts: ['＋', 'Tạo bài'],
+  created_posts: ['▤', 'Bài đã tạo'],
+  publishing: ['↗', 'Quản lý đăng bài'],
   calendar: ['▦', 'Lịch nội dung'],
   profiles: ['◈', 'Content Profiles'],
   rules: ['≡', 'Quy tắc'],
@@ -27,6 +29,7 @@ let cachedProfiles = [];
 let cachedPosts = [];
 let filter = '';
 let query = '';
+let studioReturnRoute = 'created_posts';
 let calendarMonth = new Date().toISOString().slice(0, 7);
 
 function toast(t, isError = false) {
@@ -45,7 +48,8 @@ function goto(r) {
 }
 
 function getRoute() {
-  return location.hash.slice(1) || 'queue';
+  const route = location.hash.slice(1) || 'create_posts';
+  return route === 'queue' ? 'create_posts' : route;
 }
 
 function badge(s) {
@@ -95,13 +99,25 @@ async function fetchProfiles() {
 
 async function render() {
   let r = getRoute();
-  if (!routes[r] && r !== 'studio') r = 'queue';
+  if (!serverStatus) await fetchStatus();
+  if ($('#appVersion')) $('#appVersion').textContent = `v${serverStatus?.appVersion || '...'}`;
+  if (!routes[r] && r !== 'studio') r = 'create_posts';
   $('#title').textContent = r === 'studio' ? 'AI Content Studio' : routes[r][1];
-  $('#nav').innerHTML = Object.entries(routes).map(([k, v]) =>
-    `<a href="#${k}" class="${r === k ? 'active' : ''}"><i>${v[0]}</i>${v[1]}</a>`
-  ).join('');
+  const postRoutes = ['create_posts', 'created_posts', 'publishing'];
+  const otherRoutes = Object.entries(routes).filter(([key]) => !postRoutes.includes(key));
+  $('#nav').innerHTML = `
+    <div class="nav-group ${postRoutes.includes(r) || r === 'studio' ? 'open' : ''}">
+      <div class="nav-group-title"><i>▤</i><span>Quản lý bài</span></div>
+      <div class="nav-children">
+        ${postRoutes.map(k => `<a href="#${k}" class="${r === k ? 'active' : ''}"><i>${routes[k][0]}</i>${routes[k][1]}</a>`).join('')}
+      </div>
+    </div>
+    ${otherRoutes.map(([k, v]) => `<a href="#${k}" class="${r === k ? 'active' : ''}"><i>${v[0]}</i>${v[1]}</a>`).join('')}
+  `;
   const views = {
-    queue: renderQueue,
+    create_posts: renderQueue,
+    created_posts: renderQueue,
+    publishing: renderQueue,
     calendar: renderCalendar,
     profiles: renderProfiles,
     rules: renderRules,
@@ -116,6 +132,7 @@ async function render() {
 }
 
 async function renderQueue() {
+  const queueMode = getRoute();
   await fetchProfiles();
   let syncedTopics = [];
   try {
@@ -127,7 +144,10 @@ async function renderQueue() {
     cachedPosts = [];
   }
 
+  const publishingStatuses = ['APPROVED', 'READY_FOR_MANUAL_UPLOAD', 'MANUALLY_UPLOADED'];
+  const statusOptions = Object.entries(labels).filter(([key]) => queueMode !== 'publishing' || publishingStatuses.includes(key));
   let jobs = cachedPosts.filter(j =>
+    (queueMode !== 'publishing' || publishingStatuses.includes(j.status)) &&
     (!filter || j.status === filter) &&
     (!query || `${j.topic_title} ${j.profile_name || ''}`.toLowerCase().includes(query.toLowerCase()))
   );
@@ -137,7 +157,7 @@ async function renderQueue() {
   const uploadedCount = cachedPosts.filter(j => j.status === 'MANUALLY_UPLOADED').length;
 
   $('#view').innerHTML = `
-    <div class="stats">
+    <div class="stats" ${queueMode === 'publishing' ? '' : 'style="display:none"'}>
       ${[
         [cachedPosts.length, 'Tổng số bài viết', 'Lưu bền vững trong Database'],
         [reviewCount, 'Chờ duyệt nội dung', 'Cần kiểm tra caption và ảnh'],
@@ -152,8 +172,8 @@ async function renderQueue() {
       `).join('')}
     </div>
 
-    <section class="panel">
-      <div class="panelhead">
+    <section class="panel queue-panel" ${queueMode === 'create_posts' ? '' : 'style="display:none"'}>
+      <div class="panelhead queue-panelhead">
         <div>
           <h2>Tạo bài từ lịch đã đồng bộ <span class="pill">/ ${syncedTopics.length} lịch</span></h2>
           <p class="muted">Chọn các lịch trong Sheet rồi chạy tạo caption, ảnh và bộ OUTPUT.</p>
@@ -164,7 +184,7 @@ async function renderQueue() {
         </div>
       </div>
       <div class="tablewrap">
-        <table>
+        <table class="queue-table topic-queue-table">
           <thead><tr><th><input type="checkbox" id="selectAllTopics" aria-label="Chọn tất cả lịch có thể tạo"></th><th>CHỦ ĐỀ TỪ SHEET</th><th>PROFILE</th><th>LỊCH ĐĂNG</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead>
           <tbody>
             ${syncedTopics.map(t => {
@@ -178,13 +198,13 @@ async function renderQueue() {
               return `<tr>
                 <td><input type="checkbox" data-topic-select value="${esc(t.id)}" ${canGenerate ? '' : 'disabled'} aria-label="Chọn ${esc(t.topic_title)}"></td>
                 <td><div class="topic">${esc(t.topic_title)}</div><small>${esc(t.topic_id)} · Sheet: ${esc(t.status)}${esc(availability)}</small></td>
-                <td>${esc(t.profile_name || t.profile_id)}</td>
-                <td>${esc(t.content_date || 'Chưa có ngày')} <small>${esc(t.publish_time || 'Chưa có giờ')} · GMT+7</small></td>
-                <td>${t.post_id ? badge(t.post_status) : '<span class="tag">Chưa tạo</span>'}</td>
-                <td>${finished
+                <td class="profile-cell">${esc(t.profile_name || t.profile_id)}</td>
+                <td class="schedule-cell">${esc(t.content_date || 'Chưa có ngày')} <small>${esc(t.publish_time || 'Chưa có giờ')} · GMT+7</small></td>
+                <td class="status-cell">${t.post_id ? badge(t.post_status) : '<span class="tag">Chưa tạo</span>'}</td>
+                <td><div class="row-actions">${finished
                   ? `<button data-open="${esc(t.post_id)}">Mở bài</button>`
                   : `<button data-create-topic="${esc(t.id)}" ${canCreateOne ? '' : 'disabled'} class="primary">⚡ Tạo bài</button>`}
-                  <button data-delete-topic="${esc(t.id)}" title="Xóa lịch khỏi tool">🗑</button>
+                  <button data-delete-topic="${esc(t.id)}" class="icon-button" title="Xóa lịch khỏi tool" aria-label="Xóa lịch">🗑</button></div>
                 </td>
               </tr>`;
             }).join('') || '<tr><td colspan="6" class="empty">Chưa có lịch từ Sheet. Hãy bấm <b>Đồng bộ tất cả Sheet</b>.</td></tr>'}
@@ -193,16 +213,16 @@ async function renderQueue() {
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel" ${queueMode === 'create_posts' ? 'style="display:none"' : ''}>
       <div class="panelhead">
-        <h2>Danh sách bài đã tạo <span class="pill">/ ${jobs.length} bài viết</span></h2>
+        <h2>${queueMode === 'publishing' ? 'Quản lý đăng bài' : 'Danh sách bài đã tạo'} <span class="pill">/ ${jobs.length} bài viết</span></h2>
         <div class="toolbar">
-          <button id="publishSelectedPosts" class="primary">Đăng bài đã chọn</button>
-          <button id="deleteSelectedPosts">🗑 Xóa bài đã chọn</button>
+          <button id="publishSelectedPosts" class="primary" ${queueMode === 'publishing' ? '' : 'style="display:none"'}>Đăng bài đã chọn</button>
+          <button id="deleteSelectedPosts" ${queueMode === 'created_posts' ? '' : 'style="display:none"'}>🗑 Xóa bài đã chọn</button>
           <input id="search" type="search" placeholder="Tìm chủ đề hoặc thương hiệu..." value="${esc(query)}">
           <select id="filter">
-            <option value="">Tất cả trạng thái</option>
-            ${Object.entries(labels).map(([k, v]) => `<option value="${k}" ${filter === k ? 'selected' : ''}>${v}</option>`).join('')}
+            <option value="">${queueMode === 'publishing' ? 'Tất cả trạng thái đăng' : 'Tất cả trạng thái'}</option>
+            ${statusOptions.map(([k, v]) => `<option value="${k}" ${filter === k ? 'selected' : ''}>${v}</option>`).join('')}
           </select>
         </div>
       </div>
@@ -367,6 +387,7 @@ async function renderQueue() {
   document.querySelectorAll('[data-open]').forEach(b => {
     b.onclick = () => {
       currentPostId = b.dataset.open;
+      studioReturnRoute = queueMode === 'publishing' ? 'publishing' : 'created_posts';
       goto('studio');
     };
   });
@@ -545,7 +566,7 @@ async function syncAllProfiles(button, onDone = null) {
 
 async function renderStudio() {
   if (!currentPostId) {
-    goto('queue');
+    goto('created_posts');
     return;
   }
 
@@ -554,7 +575,7 @@ async function renderStudio() {
     post = await api(`/api/posts/${currentPostId}`);
   } catch (err) {
     toast(`Không tải được bài viết: ${err.message}`, true);
-    goto('queue');
+    goto('created_posts');
     return;
   }
 
@@ -706,7 +727,7 @@ async function renderStudio() {
     </div>
   `;
 
-  $('#back').onclick = () => goto('queue');
+  $('#back').onclick = () => goto(studioReturnRoute);
 
   // AI Caption
   $('#aiCaption').onclick = async () => {
@@ -1012,7 +1033,11 @@ function editProfile(p) {
       <label>Thể loại<input name="type" value="${esc(p?.type || '')}" required placeholder="Hội nghị / Du lịch..."></label>
       <label>Giờ đăng dự kiến<input type="time" name="time" value="${p?.time || '09:00'}" required></label>
     </div>
-    <label>Thư mục Drive OUTPUT (ID hoặc đường dẫn)<input name="folder_id_output" value="${esc(p?.folder_id_output || '')}" placeholder="Ví dụ: HBG_MICE/OUTPUT hoặc 1a2B..."></label>
+    <div class="formrow">
+      <label>Thư mục Drive RULES (ID hoặc đường dẫn)<input name="folder_id_rules" value="${esc(p?.folder_id_rules || '')}" placeholder="Khuyên dùng Folder ID, ví dụ: 1a2B..."></label>
+      <label>Thư mục Drive OUTPUT (ID hoặc đường dẫn)<input name="folder_id_output" value="${esc(p?.folder_id_output || '')}" placeholder="Khuyên dùng Folder ID, ví dụ: 1a2B..."></label>
+    </div>
+    <p class="muted">Mở từng thư mục trên Google Drive và sao chép phần ID sau <b>/folders/</b> trong URL. Folder ID ổn định hơn đường dẫn theo tên.</p>
     <label>Google Sheet ID chứa tab TOPICS<input name="sheet_id_topics" value="${esc(p?.sheet_id_topics || '')}" placeholder="Ví dụ: 1BxiMVs0XR..."></label>
     <div class="formrow">
       <label>Tên Facebook Page<input name="page_name" value="${esc(p?.page_name || '')}" placeholder="Ví dụ: Danang Events"></label>
@@ -1025,6 +1050,7 @@ function editProfile(p) {
         name: f.get('name').trim(),
         type: f.get('type').trim(),
         time: f.get('time'),
+        folder_id_rules: f.get('folder_id_rules').trim(),
         folder_id_output: f.get('folder_id_output').trim(),
         sheet_id_topics: f.get('sheet_id_topics').trim(),
         page_name: f.get('page_name').trim(),
@@ -1209,6 +1235,8 @@ async function renderLogs() {
 
 async function renderSettings() {
   await fetchStatus();
+  if ($('#appVersion')) $('#appVersion').textContent = `v${serverStatus?.appVersion || '...'}`;
+  const appConfig = await api('/api/app-config');
 
   const googleOk = serverStatus?.services?.googleDrive?.configured;
   const openaiOk = serverStatus?.services?.openai?.configured;
@@ -1275,7 +1303,98 @@ async function renderSettings() {
         </div>
       </section>
     </div>
+
+    <section class="panel" style="margin-top:20px">
+      <div class="panelhead">
+        <div>
+          <h2>Cấu hình ứng dụng</h2>
+          <p class="muted">Các giá trị được lưu cục bộ. Trường bí mật để trống sẽ giữ nguyên giá trị hiện tại.</p>
+        </div>
+      </div>
+      <form id="appConfigForm">
+        <div id="appConfigFields"></div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:18px">
+          <button class="primary" type="submit">💾 Lưu cấu hình</button>
+          <small class="muted">Khởi động lại ứng dụng sau khi lưu để áp dụng đầy đủ.</small>
+        </div>
+      </form>
+    </section>
   `;
+
+  const configGroups = [
+    ['Vận hành', [
+      ['NODE_ENV', 'Môi trường', 'text'],
+      ['APP_TIMEZONE', 'Múi giờ', 'text'],
+      ['PUBLISH_MODE', 'Chế độ xuất bản', 'text'],
+      ['DRIVE_OUTPUT_REQUIRED', 'Bắt buộc xuất Drive', 'boolean'],
+      ['AUTOMATION_ENABLED', 'Bật tự động hóa', 'boolean'],
+      ['AUTOMATION_INTERVAL_MINUTES', 'Chu kỳ tự động (phút)', 'number']
+    ]],
+    ['OpenAI', [
+      ['OPENAI_API_KEY', 'API key', 'password'],
+      ['OPENAI_TEXT_MODEL', 'Model nội dung', 'text'],
+      ['OPENAI_IMAGE_MODEL', 'Model hình ảnh', 'text']
+    ]],
+    ['Google', [
+      ['GOOGLE_CLIENT_ID', 'Client ID', 'text'],
+      ['GOOGLE_CLIENT_SECRET', 'Client secret', 'password'],
+      ['GOOGLE_REDIRECT_URI', 'OAuth redirect URI', 'text']
+    ]],
+    ['Meta / Facebook', [
+      ['META_APP_ID', 'App ID', 'text'],
+      ['META_APP_SECRET', 'App secret', 'password'],
+      ['META_GRAPH_VERSION', 'Graph API version', 'text']
+    ]],
+    ['Bảo mật và dịch vụ nâng cao', [
+      ['TOKEN_ENCRYPTION_KEY', 'Khóa mã hóa token', 'password'],
+      ['AUTH_SECRET', 'Khóa phiên đăng nhập', 'password'],
+      ['DATABASE_URL', 'Database URL (dự phòng)', 'text'],
+      ['REDIS_URL', 'Redis URL (dự phòng)', 'text'],
+      ['OBJECT_STORAGE_ENDPOINT', 'Object storage endpoint', 'text'],
+      ['OBJECT_STORAGE_BUCKET', 'Object storage bucket', 'text'],
+      ['OBJECT_STORAGE_ACCESS_KEY', 'Object storage access key', 'password'],
+      ['OBJECT_STORAGE_SECRET_KEY', 'Object storage secret key', 'password']
+    ]]
+  ];
+
+  $('#appConfigFields').innerHTML = configGroups.map(([title, fields]) => `
+    <fieldset style="border:1px solid var(--line);border-radius:10px;padding:16px;margin:14px 0">
+      <legend style="padding:0 8px;font-weight:700">${esc(title)}</legend>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
+        ${fields.map(([key, label, type]) => {
+          const item = appConfig.settings[key] || {};
+          if (type === 'boolean') return `
+            <label style="display:flex;align-items:center;gap:10px;margin-top:24px">
+              <input data-config-key="${key}" type="checkbox" ${item.value === 'true' ? 'checked' : ''} style="width:auto">
+              ${esc(label)}
+            </label>`;
+          const placeholder = item.secret && item.configured ? 'Đã cấu hình — để trống để giữ nguyên' : '';
+          return `<label>${esc(label)}
+            <input data-config-key="${key}" type="${type}" value="${esc(item.value || '')}" placeholder="${esc(placeholder)}" autocomplete="off">
+          </label>`;
+        }).join('')}
+      </div>
+    </fieldset>
+  `).join('');
+
+  $('#appConfigForm').onsubmit = async event => {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    const settings = {};
+    document.querySelectorAll('[data-config-key]').forEach(input => {
+      settings[input.dataset.configKey] = input.type === 'checkbox' ? String(input.checked) : input.value;
+    });
+    try {
+      await api('/api/app-config', { method: 'PUT', body: JSON.stringify({ settings }) });
+      toast('Đã lưu cấu hình. Hãy đóng và mở lại ứng dụng để áp dụng đầy đủ.');
+      await renderSettings();
+    } catch (err) {
+      toast(`Không thể lưu cấu hình: ${err.message}`, true);
+    } finally {
+      button.disabled = false;
+    }
+  };
 
   $('#refreshStatus').onclick = () => renderSettings();
 

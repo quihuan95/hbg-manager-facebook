@@ -4,6 +4,26 @@ import { getPostById, updatePostStatus } from '../models/post.js';
 import { resolveFolder, createFolder, uploadFileToDrive } from './drive.js';
 import { sha256 } from '../crypto.js';
 
+function driveSafeSlug(value, maxLength = 64) {
+  const slug = String(value || 'bai-viet')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxLength)
+    .replace(/-+$/g, '');
+  return slug || 'bai-viet';
+}
+
+function meaningfulPostFolderName(post) {
+  const time = String(post.scheduled_time || '09:00').replace(':', '-');
+  const shortId = String(post.id || 'post').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toLowerCase();
+  return `${time}_${driveSafeSlug(post.topic_title)}_${shortId}`;
+}
+
 export async function exportPostToDrive(postId) {
   const post = getPostById(postId);
   if (!post) throw new Error('Không tìm thấy bài viết để xuất file.');
@@ -23,8 +43,8 @@ export async function exportPostToDrive(postId) {
 
   const rootFolder = await resolveFolder(outputRootFolderId);
   const dateFolder = await createFolder(rootFolder.id, post.content_date);
-  const postFolder = await createFolder(dateFolder.id, `post_${postId}`);
-  const revFolder = await createFolder(postFolder.id, `revision_${String(rev.revision_number).padStart(3, '0')}`);
+  const postFolder = await createFolder(dateFolder.id, meaningfulPostFolderName(post));
+  const revFolder = await createFolder(postFolder.id, `v${String(rev.revision_number).padStart(3, '0')}`);
 
   const now = new Date().toISOString();
 

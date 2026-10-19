@@ -1,11 +1,46 @@
 {
   "name": "hbg-content-studio-phase1",
-  "version": "1.0.0",
+  "version": "1.0.5",
   "type": "module",
-  "description": "The HBG Content Studio - Phase 1 Prototype with Node.js Backend",
-  "main": "server.js",
+  "description": "The HBG Content Studio - Phase 1 Desktop App",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "electron": "electron .",
+    "electron:dev": "electron . --dev",
+    "build:win": "electron-builder --win nsis",
+    "build:portable": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^38.2.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "vn.hoabinhgroup.contentstudio",
+    "productName": "HBG Content Studio",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "server.js",
+      "src/**/*",
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      ".env.example"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

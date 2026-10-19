@@ -7,7 +7,9 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 
 export function loadEnv() {
-  const envPath = path.join(rootDir, '.env');
+  const envPath = process.env.HBG_ENV_PATH
+    ? path.resolve(process.env.HBG_ENV_PATH)
+    : path.join(rootDir, '.env');
   if (fs.existsSync(envPath)) {
     const content = fs.readFileSync(envPath, 'utf8');
     for (const rawLine of content.split('\n')) {
@@ -41,7 +43,9 @@ export const config = {
   },
 
   // Database
-  dbPath: path.resolve(rootDir, 'data', 'content_studio.sqlite'),
+  dbPath: process.env.HBG_DATA_DIR
+    ? path.resolve(process.env.HBG_DATA_DIR, 'content_studio.sqlite')
+    : path.resolve(rootDir, 'data', 'content_studio.sqlite'),
 
   // Google OAuth
   google: {

@@ -5,6 +5,7 @@
 
 # Dependencies
 node_modules/
+release/
 
 # Runtime database and logs
 data/*.sqlite

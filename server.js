@@ -18,10 +18,12 @@ import { exportPostToDrive } from './src/google/export.js';
 import { markManuallyUploaded, markManyManuallyUploaded } from './src/manual_upload.js';
 import { runContentAutomation } from './src/automation.js';
 import { testMetaConnection } from './src/meta.js';
+import { getAppSettings, saveAppSettings } from './src/settings.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DIST_DIR = path.join(__dirname, 'dist');
+const APP_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
 
 // Initialize database schema and seeds
 initDb();
@@ -100,6 +102,7 @@ const server = http.createServer(async (req, res) => {
 
         return sendJson(res, 200, {
           success: true,
+          appVersion: APP_VERSION,
           env: config.env,
           timezone: config.timezone,
           publishMode: config.publishMode,
@@ -135,6 +138,15 @@ const server = http.createServer(async (req, res) => {
             }
           }
         });
+      }
+
+      // Local desktop configuration. Secret values are never returned to the renderer.
+      if (pathname === '/api/app-config' && req.method === 'GET') {
+        return sendJson(res, 200, { success: true, settings: getAppSettings() });
+      }
+      if (pathname === '/api/app-config' && req.method === 'PUT') {
+        const body = await parseBody(req);
+        return sendJson(res, 200, saveAppSettings(body.settings || {}));
       }
 
       // 3. Google OAuth start
@@ -500,7 +512,7 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-server.listen(config.port, () => {
+server.listen(config.port, '127.0.0.1', () => {
   console.log(`====================================================`);
   console.log(`🚀 The HBG Content Studio Phase 1 (Production Backend)`);
   console.log(`👉 URL: http://localhost:${config.port}`);
@@ -525,3 +537,5 @@ server.listen(config.port, () => {
     console.log(`⚡ Automation: ON · every ${config.automation.intervalMinutes} minutes`);
   }
 });
+
+export { server };
