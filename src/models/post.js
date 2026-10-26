@@ -74,8 +74,7 @@ export function createPostFromTopic(profileId, topicTitle, contentDate = null, s
 
   const initialFindings = [
     { rule: 'Caption có nội dung', pass: false, type: 'blocker' },
-    { rule: 'Có ảnh đính kèm (upload hoặc AI)', pass: false, type: 'blocker' },
-    { rule: 'Không chứa từ cấm ("không chỉ... mà còn...")', pass: true, type: 'blocker' }
+    { rule: 'Có ảnh đính kèm (upload hoặc AI)', pass: false, type: 'blocker' }
   ];
 
   const revisionHash = sha256({
@@ -125,8 +124,7 @@ export function createNewRevision(postId, updates, expectedRevisionId = null) {
   // Re-evaluate validation findings
   const findings = [
     { rule: 'Caption có nội dung', pass: !!caption.trim(), type: 'blocker' },
-    { rule: 'Có ảnh đính kèm (upload hoặc AI)', pass: !!imageData, type: 'blocker' },
-    { rule: 'Không chứa từ cấm ("không chỉ")', pass: !caption.toLowerCase().includes('không chỉ'), type: 'blocker' }
+    { rule: 'Có ảnh đính kèm (upload hoặc AI)', pass: !!imageData, type: 'blocker' }
   ];
 
   const revisionHash = sha256({

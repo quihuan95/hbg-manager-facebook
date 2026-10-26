@@ -259,7 +259,9 @@ async function renderQueue() {
                   <td>
                     ${['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(j.status)
                       ? `<button data-publish="${j.id}" class="primary">Đăng bài</button>`
-                      : ''}
+                      : j.status === 'MANUALLY_UPLOADED'
+                        ? `<button data-publish="${j.id}" style="border:1px solid #1877f2;color:#1877f2;background:#f0f7ff;font-weight:600">↻ Đăng lại</button>`
+                        : ''}
                     <button data-open="${j.id}" class="${j.status === 'READY_FOR_MANUAL_UPLOAD' ? 'primary' : ''}">
                       ${j.status === 'READY_FOR_MANUAL_UPLOAD' ? '📋 Xem & Đăng' : 'Mở Studio'}
                     </button>
@@ -346,7 +348,7 @@ async function renderQueue() {
 
     const eligibleIds = selectedIds.filter(id => {
       const post = cachedPosts.find(item => item.id === id);
-      return post && ['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(post.status);
+      return post && ['READY_FOR_MANUAL_UPLOAD', 'APPROVED', 'MANUALLY_UPLOADED'].includes(post.status);
     });
     const skippedCount = selectedIds.length - eligibleIds.length;
     if (!eligibleIds.length) return toast('Các bài đã chọn chưa được duyệt hoặc chưa sẵn sàng đăng.', true);
@@ -395,21 +397,42 @@ async function renderQueue() {
     button.onclick = () => {
       const post = cachedPosts.find(item => item.id === button.dataset.publish);
       if (!post) return;
-      modal('Xác nhận đăng bài lên Facebook', `
-        <p class="muted">Xác nhận bạn đã đăng thủ công bài <b>${esc(post.topic_title)}</b>.</p>
-        <label>Facebook Page đích
-          <input name="pageTarget" required value="${esc(post.facebook_page_id || '')}" placeholder="Page ID hoặc https://facebook.com/ten-page">
+      const isRePublish = post.status === 'MANUALLY_UPLOADED';
+      modal(isRePublish ? 'Đăng lại bài lên Facebook' : 'Đăng bài lên Facebook', `
+        <p class="muted">
+          ${isRePublish ? '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#fef3c7;color:#b45309;font-weight:600;font-size:12px;margin-bottom:8px">⚠️ Bài viết này đã được đăng trước đó</span><br>' : ''}
+          ${isRePublish ? 'Bạn có muốn đăng lại bài' : 'Đăng bài'} <b>${esc(post.topic_title)}</b> lên Fanpage?
+        </p>
+        <label>Facebook Page đích (để trống sẽ dùng Page theo Token hoặc Profile)
+          <input name="pageTarget" value="${esc(post.facebook_page_id || '')}" placeholder="1356722127527894 hoặc link Page">
+        </label>
+        <label>Phương thức đăng
+          <select name="publishMethod" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--line);margin-top:5px">
+            <option value="auto">🚀 Tự động đăng qua Meta Graph API (Khuyên dùng)</option>
+            <option value="manual">${isRePublish ? 'Xác nhận đã đăng lại thủ công' : 'Đã đăng thủ công trên Facebook (Ghi nhận)'}</option>
+          </select>
         </label>
         <label>Ghi chú (tùy chọn)
-          <input name="note" placeholder="Ví dụ: Đã ghim bài lên đầu trang">
+          <input name="note" placeholder="Ví dụ: Đăng lại bài">
         </label>
       `, async f => {
+        const method = f.get('publishMethod');
+        const pageTarget = f.get('pageTarget');
+        const note = f.get('note');
         try {
-          await api(`/api/posts/${encodeURIComponent(post.id)}/mark-manually-uploaded`, {
-            method: 'POST',
-            body: JSON.stringify({ pageTarget: f.get('pageTarget'), note: f.get('note') })
-          });
-          toast('Đã ghi nhận đăng bài thành công!');
+          if (method === 'auto') {
+            const res = await api(`/api/posts/${encodeURIComponent(post.id)}/publish-facebook`, {
+              method: 'POST',
+              body: JSON.stringify({ pageTarget, note })
+            });
+            toast(res.message || 'Đã đăng bài thành công lên Facebook!');
+          } else {
+            await api(`/api/posts/${encodeURIComponent(post.id)}/mark-manually-uploaded`, {
+              method: 'POST',
+              body: JSON.stringify({ pageTarget, note })
+            });
+            toast('Đã ghi nhận đăng bài thành công!');
+          }
           await renderQueue();
         } catch (err) {
           toast(`Lỗi đăng bài: ${err.message}`, true);
@@ -436,9 +459,9 @@ async function renderQueue() {
 function modal(title, body, fn) {
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = body;
-  $('#modalForm').onsubmit = e => {
+  $('#modalForm').onsubmit = async e => {
     e.preventDefault();
-    if (fn(new FormData(e.target)) !== false) $('#modal').close();
+    if ((await fn(new FormData(e.target))) !== false) $('#modal').close();
   };
   $('#modal').showModal();
 }
@@ -619,19 +642,24 @@ async function renderStudio() {
     ${canPublish || isUploaded ? `
       <section class="panel" style="border: 2px solid #367260; background:#fbfdfc">
         <div class="panelhead">
-          <h2>🚀 Vận hành Đăng thủ công (Manual Upload)</h2>
+          <h2>🚀 Vận hành Đăng bài (Publishing Studio)</h2>
           <span class="tag published">${isUploaded ? 'Đã hoàn tất đăng' : 'Sẵn sàng đăng'}</span>
         </div>
         <div class="actions">
-          <button id="copyCaption" class="primary">📋 Sao chép toàn bộ Caption</button>
+          <button id="autoPublishFb" class="primary" style="background:#1877f2;border-color:#1877f2;color:white">
+            ${isUploaded ? '↻ Đăng lại lên Facebook' : '🚀 Tự động đăng lên Facebook'}
+          </button>
+          <button id="copyCaption">📋 Sao chép toàn bộ Caption</button>
           ${post.image_data ? `<button id="downloadImage">📥 Tải ảnh Final</button>` : ''}
           ${post.drive_folder_id ? `<a href="https://drive.google.com/drive/folders/${esc(post.drive_folder_id)}" target="_blank" class="button" style="padding:10px 16px;text-decoration:none;border:1px solid var(--line);border-radius:8px;background:white;color:#273957;font-weight:600">📁 Mở thư mục bài trên Drive</a>` : ''}
-          ${!isUploaded ? `<button id="markUploaded" class="primary">Đăng bài</button>` : `
-            <div style="font-size:14px;color:#2b6b52;padding:10px 0">
+          <button id="markUploaded">${isUploaded ? 'Đánh dấu đã đăng lại thủ công' : 'Đánh dấu đã đăng thủ công'}</button>
+          ${isUploaded ? `
+            <div style="font-size:14px;color:#2b6b52;padding:10px 0;width:100%">
               Đã đăng lúc: <b>${new Date(post.manually_uploaded_at).toLocaleString('vi-VN')}</b>
+              ${post.manual_post_url ? ` · <a href="${esc(post.manual_post_url)}" target="_blank" style="color:#1877f2;text-decoration:underline;font-weight:600">Xem bài viết trên Facebook ↗</a>` : ''}
               ${post.manual_target_page ? ` · Page đích: <b>${esc(post.manual_target_page)}</b>` : ''}
             </div>
-          `}
+          ` : ''}
         </div>
       </section>
     ` : ''}
@@ -686,16 +714,9 @@ async function renderStudio() {
 
       <div>
         <section class="panel">
-          <h2>Kiểm tra an toàn & Phê duyệt</h2>
-          <p class="muted">Các điều kiện bắt buộc trước khi phê duyệt và xuất lên Drive:</p>
-          ${findings.map(c => `
-            <div class="check ${c.pass ? 'pass' : ''}">
-              <span>${esc(c.rule)}</span>
-              <b>${c.pass ? 'Đạt' : 'Chưa đạt'}</b>
-            </div>
-          `).join('')}
+          <h2>Phê duyệt & Xuất bản</h2>
 
-          <div class="actions" style="margin-top:20px">
+          <div class="actions">
             <button class="primary" id="approveBtn" ${post.status === 'APPROVED' || isReadyForManual ? 'disabled' : ''}>
               ${post.status === 'APPROVED' || isReadyForManual ? '✓ Đã phê duyệt' : 'Phê duyệt bản này (Approve)'}
             </button>
@@ -914,6 +935,45 @@ async function renderStudio() {
       a.href = post.image_data;
       a.download = `post_${post.id}_image.png`;
       a.click();
+    };
+  }
+
+  // Auto Publish to Facebook
+  const autoPublishFbBtn = $('#autoPublishFb');
+  if (autoPublishFbBtn) {
+    autoPublishFbBtn.onclick = () => {
+      const isRePublish = post.status === 'MANUALLY_UPLOADED';
+      modal(isRePublish ? 'Đăng lại bài tự động lên Facebook' : 'Đăng bài tự động lên Facebook', `
+        <p class="muted">
+          ${isRePublish ? '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#fef3c7;color:#b45309;font-weight:600;font-size:12px;margin-bottom:8px">⚠️ Bài viết này đã được đăng trước đó</span><br>' : ''}
+          Hệ thống sẽ dùng Meta Graph API đăng ${isRePublish ? 'lại' : 'trực tiếp'} bài <b>${esc(post.topic_title)}</b> và ảnh đính kèm lên Fanpage.
+        </p>
+        <label>Facebook Page đích (để trống sẽ tự nhận diện theo Token)
+          <input name="pageTarget" value="${esc(post.facebook_page_id || '')}" placeholder="1356722127527894 hoặc link Page">
+        </label>
+        <label>Ghi chú (tùy chọn)
+          <input name="note" placeholder="Ví dụ: Đăng lại bài">
+        </label>
+      `, async f => {
+        autoPublishFbBtn.disabled = true;
+        autoPublishFbBtn.textContent = '⏳ Đang đăng lên Facebook...';
+        try {
+          const res = await api(`/api/posts/${post.id}/publish-facebook`, {
+            method: 'POST',
+            body: JSON.stringify({
+              pageTarget: f.get('pageTarget'),
+              note: f.get('note')
+            })
+          });
+          toast(res.message || 'Đã đăng bài thành công lên Facebook!');
+          await renderStudio();
+        } catch (err) {
+          toast(`Lỗi đăng bài: ${err.message}`, true);
+          autoPublishFbBtn.disabled = false;
+          autoPublishFbBtn.textContent = isRePublish ? '↻ Đăng lại lên Facebook' : '🚀 Tự động đăng lên Facebook';
+          return false;
+        }
+      });
     };
   }
 
@@ -1278,10 +1338,10 @@ async function renderSettings() {
             Meta / Facebook Pages
             <small>${esc(serverStatus?.services?.facebook?.detail || '')}</small>
           </span>
-          <b>${metaOk ? 'Đã cấu hình App' : 'Chưa cấu hình'}</b>
+          <b>${serverStatus?.services?.facebook?.hasPageToken ? 'Đã kết nối Page' : (metaOk ? 'Đã cấu hình App' : 'Chưa cấu hình')}</b>
         </div>
         <div style="margin: 10px 0 20px 0">
-          <button id="testMetaBtn" ${metaOk ? '' : 'disabled'} style="font-size:13px">🧪 Kiểm tra kết nối Meta App</button>
+          <button id="testMetaBtn" ${metaOk ? '' : 'disabled'} style="font-size:13px">🧪 Kiểm tra kết nối Meta App & Page</button>
         </div>
 
         <div class="check pass">
@@ -1343,7 +1403,8 @@ async function renderSettings() {
     ['Meta / Facebook', [
       ['META_APP_ID', 'App ID', 'text'],
       ['META_APP_SECRET', 'App secret', 'password'],
-      ['META_GRAPH_VERSION', 'Graph API version', 'text']
+      ['META_GRAPH_VERSION', 'Graph API version', 'text'],
+      ['FACEBOOK_PAGE_ACCESS_TOKEN', 'Page / System User Access Token', 'password']
     ]],
     ['Bảo mật và dịch vụ nâng cao', [
       ['TOKEN_ENCRYPTION_KEY', 'Khóa mã hóa token', 'password'],

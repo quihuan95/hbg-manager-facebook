@@ -17,7 +17,7 @@ import { approvePost, requestChanges } from './src/review/approval.js';
 import { exportPostToDrive } from './src/google/export.js';
 import { markManuallyUploaded, markManyManuallyUploaded } from './src/manual_upload.js';
 import { runContentAutomation } from './src/automation.js';
-import { testMetaConnection } from './src/meta.js';
+import { testMetaConnection, publishPostToFacebook } from './src/meta.js';
 import { getAppSettings, saveAppSettings } from './src/settings.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -125,10 +125,15 @@ const server = http.createServer(async (req, res) => {
             },
             facebook: {
               configured: isMetaAppConfigured,
-              status: isMetaAppConfigured ? 'app_configured' : 'not_configured',
-              detail: isMetaAppConfigured
-                ? 'Meta App đã cấu hình · Chưa kết nối Facebook Page'
-                : 'Chưa cấu hình META_APP_ID và META_APP_SECRET'
+              hasPageToken: Boolean(config.meta.pageAccessToken),
+              status: config.meta.pageAccessToken
+                ? 'page_connected'
+                : (isMetaAppConfigured ? 'app_configured' : 'not_configured'),
+              detail: config.meta.pageAccessToken
+                ? 'Đã cấu hình Page Access Token · Sẵn sàng tự động đăng Facebook'
+                : (isMetaAppConfigured
+                  ? 'Meta App đã cấu hình · Chưa có Page Access Token'
+                  : 'Chưa cấu hình META_APP_ID và META_APP_SECRET')
             },
             scheduler: {
               configured: config.automation.enabled,
@@ -468,6 +473,18 @@ const server = http.createServer(async (req, res) => {
         const body = await parseBody(req);
         const result = markManyManuallyUploaded(body.postIds, body.uploaderId || 'u_admin', body.note || 'Đăng hàng loạt từ danh sách bài đã tạo');
         return sendJson(res, result.success ? 200 : 400, result);
+      }
+
+      // 17c. Auto-publish post to Facebook Page via Meta Graph API
+      if (pathname.match(/^\/api\/posts\/([^/]+)\/publish-facebook$/) && req.method === 'POST') {
+        const postId = pathname.split('/')[3];
+        const body = await parseBody(req);
+        const result = await publishPostToFacebook(postId, {
+          pageTarget: body.pageTarget || null,
+          uploaderId: body.uploaderId || 'u_admin',
+          note: body.note || null
+        });
+        return sendJson(res, 200, result);
       }
 
       // 18. Audit Logs

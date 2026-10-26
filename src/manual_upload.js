@@ -6,8 +6,8 @@ export function markManuallyUploaded(postId, uploaderId = 'u_admin', postUrl = '
   const post = getPostById(postId);
   if (!post) throw new Error('Không tìm thấy bài viết.');
 
-  if (post.status !== 'READY_FOR_MANUAL_UPLOAD' && post.status !== 'APPROVED') {
-    throw new Error('Chỉ bài viết ở trạng thái sẵn sàng (READY_FOR_MANUAL_UPLOAD / APPROVED) mới có thể đánh dấu đã đăng.');
+  if (!['READY_FOR_MANUAL_UPLOAD', 'APPROVED', 'MANUALLY_UPLOADED'].includes(post.status)) {
+    throw new Error('Chỉ bài viết ở trạng thái sẵn sàng (READY_FOR_MANUAL_UPLOAD / APPROVED) hoặc đã đăng (MANUALLY_UPLOADED) mới có thể đăng.');
   }
 
   const targetPage = String(pageTarget || post.facebook_page_id || '').trim();
@@ -72,7 +72,7 @@ export function markManyManuallyUploaded(postIds, uploaderId = 'u_admin', note =
       skipped.push({ id: postId, reason: 'Không tìm thấy bài viết.' });
       continue;
     }
-    if (!['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(post.status)) {
+    if (!['READY_FOR_MANUAL_UPLOAD', 'APPROVED', 'MANUALLY_UPLOADED'].includes(post.status)) {
       skipped.push({ id: postId, reason: `Trạng thái ${post.status} chưa sẵn sàng đăng.` });
       continue;
     }

@@ -109,9 +109,8 @@ export async function exportPostToDrive(postId) {
 - **Thời gian duyệt:** ${post.approved_at || now}
 - **Trạng thái:** Sẵn sàng cho người vận hành tải lên Facebook thủ công (READY_FOR_MANUAL_UPLOAD)
 
-## Kiểm tra an toàn:
-- [x] Đúng định vị và văn phong thương hiệu
-- [x] Không chứa cụm từ bị hạn chế
+## Kiểm tra chất lượng:
+- [x] Đúng định vị và văn phong thương hiệu theo Rule
 - [x] Đầy đủ file ảnh và caption chất lượng cao
 
 ## Danh mục tệp trong bộ bài:

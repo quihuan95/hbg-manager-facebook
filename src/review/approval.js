@@ -16,9 +16,6 @@ export function approvePost(postId, approverId = 'u_admin', checklist = {}) {
   if (!rev.image_data) {
     throw new Error('BLOCKER: Bài viết phải có hình ảnh hoàn chỉnh trước khi duyệt.');
   }
-  if (rev.caption.toLowerCase().includes('không chỉ')) {
-    throw new Error('BLOCKER: Caption chứa cụm từ bị hạn chế ("không chỉ... mà còn...").');
-  }
 
   const approvalId = `app_${crypto.randomUUID().slice(0, 10)}`;
   const now = new Date().toISOString();

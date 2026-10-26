@@ -20,7 +20,7 @@ YÊU CẦU ĐỊNH DẠNG:
   "image_brief": "Mô tả ngắn gọn ý tưởng bố cục cho hình ảnh",
   "used_facts": []
 }
-- Tuyệt đối KHÔNG dùng cụm từ cấm (ví dụ: "không chỉ... mà còn...").
+- Tuyệt đối tuân thủ các từ ngữ và giới hạn được nêu trong quy tắc thương hiệu (QUY TẮC THƯƠNG HIỆU BẮT BUỘC).
 - Tuyệt đối KHÔNG tự bịa số liệu, giá tour, chứng nhận hoặc khách hàng không có trong rule.
 - Giữ văn phong chuyên nghiệp, đúng định vị thương hiệu.`;
 

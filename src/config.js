@@ -74,6 +74,8 @@ export const config = {
   // Meta / Facebook Pages
   meta: {
     appId: process.env.META_APP_ID || '',
-    appSecret: process.env.META_APP_SECRET || ''
+    appSecret: process.env.META_APP_SECRET || '',
+    graphVersion: process.env.META_GRAPH_VERSION || 'v26.0',
+    pageAccessToken: process.env.FACEBOOK_PAGE_ACCESS_TOKEN || process.env.PAGE_ACCESS_TOKEN || ''
   }
 };
