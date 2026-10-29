@@ -1,13 +1,9 @@
 import sharp from 'sharp';
-
-function dataUrlBuffer(value) {
-  const match = String(value || '').match(/^data:image\/(?:png|jpeg|jpg|webp);base64,(.+)$/i);
-  return match ? Buffer.from(match[1], 'base64') : null;
-}
+import { readMediaBuffer } from '../media.js';
 
 export async function applyProfileLogo(imageData, logoData) {
-  const imageBuffer = dataUrlBuffer(imageData);
-  const logoBuffer = dataUrlBuffer(logoData);
+  const imageBuffer = readMediaBuffer(imageData);
+  const logoBuffer = readMediaBuffer(logoData);
   if (!imageBuffer || !logoBuffer) return imageData;
 
   const image = sharp(imageBuffer);

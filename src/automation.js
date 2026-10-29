@@ -25,7 +25,14 @@ function writeAutomationError(action, entityType, entityId, details) {
   );
 }
 
-async function syncRulesFromDrive(profile) {
+function writeAutomationSuccess(action, entityType, entityId, details) {
+  db.prepare(`
+    INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, details_json, created_at)
+    VALUES (?, 'automation', ?, ?, ?, ?, ?)
+  `).run(`audit_${crypto.randomUUID().slice(0, 12)}`, action, entityType, entityId, JSON.stringify(details), new Date().toISOString());
+}
+
+export async function syncRulesFromDrive(profile) {
   const rulesFolder = profile.folder_id_rules
     || profile.folder_id_output?.replace(/\/OUTPUT\/?$/i, '/RULES');
   if (!rulesFolder) return { changed: false, reason: 'no_rules_folder' };
@@ -169,6 +176,10 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
 
     approvePost(post.id, 'automation', { automated: true, source: 'CONTENT_PLAN' });
     const exported = await exportPostToDrive(post.id);
+    writeAutomationSuccess('CONTENT_AUTOMATION_COMPLETED', 'post', post.id, {
+      profileId: profile.id,
+      title: topic.topic_title
+    });
 
     return {
       topicId: topic.topic_id,
@@ -228,6 +239,10 @@ async function publishDuePosts(profile) {
         uploaderId: 'automation',
         pageTarget: profile.facebook_page_id,
         note: 'Tự động đăng theo lịch của Content Profile'
+      });
+      writeAutomationSuccess('FACEBOOK_AUTO_PUBLISHED', 'post', post.id, {
+        profileId: profile.id,
+        postUrl: published.postUrl
       });
       results.push({ postId: post.id, success: true, postUrl: published.postUrl });
     } catch (error) {

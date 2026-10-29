@@ -28,14 +28,14 @@ const labels = {
 };
 
 const routes = {
-  create_posts: ['＋', 'Tạo bài'],
-  created_posts: ['▤', 'Bài đã tạo'],
-  publishing: ['↗', 'Quản lý đăng bài'],
-  calendar: ['▦', 'Lịch nội dung'],
-  profiles: ['◈', 'Content Profiles'],
-  rules: ['≡', 'Quy tắc'],
-  logs: ['⌁', 'Nhật ký hệ thống'],
-  settings: ['⚙', 'Cài đặt & Kết nối']
+  create_posts: ['circle-plus', 'Tạo bài'],
+  created_posts: ['files', 'Bài đã tạo'],
+  publishing: ['send', 'Quản lý đăng bài'],
+  calendar: ['calendar-days', 'Lịch nội dung'],
+  profiles: ['contact-round', 'Content Profiles'],
+  rules: ['scroll-text', 'Quy tắc'],
+  logs: ['logs', 'Nhật ký hệ thống'],
+  settings: ['settings', 'Cài đặt & Kết nối']
 };
 
 let currentPostId = null;
@@ -47,6 +47,24 @@ let query = '';
 let studioReturnRoute = 'created_posts';
 let calendarMonth = new Date().toISOString().slice(0, 7);
 let logPage = 1;
+let notificationCursor = new Date().toISOString();
+
+function renderIcons() {
+  if (!window.lucide) return;
+  window.lucide.createIcons({ attrs: { 'aria-hidden': 'true', 'stroke-width': 1.8 } });
+}
+
+function icon(name) {
+  return `<i data-lucide="${esc(name)}"></i>`;
+}
+
+const iconObserver = new MutationObserver(mutations => {
+  if (mutations.some(mutation => [...mutation.addedNodes].some(node =>
+    node.nodeType === 1 && (node.matches?.('[data-lucide]') || node.querySelector?.('[data-lucide]'))))) {
+    requestAnimationFrame(renderIcons);
+  }
+});
+iconObserver.observe(document.body, { childList: true, subtree: true });
 
 function toast(t, isError = false) {
   const el = $('#toast');
@@ -56,6 +74,22 @@ function toast(t, isError = false) {
   el.style.background = isError ? '#8b0000' : '#142747';
   clearTimeout(window.toastTimer);
   window.toastTimer = setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
+async function pollGlobalNotifications() {
+  try {
+    const items = await api(`/api/notifications?after=${encodeURIComponent(notificationCursor)}`);
+    if (!items.length) return;
+    notificationCursor = items[items.length - 1].created_at;
+    const created = items.filter(item => item.action === 'CONTENT_AUTOMATION_COMPLETED');
+    const published = items.filter(item => item.action === 'FACEBOOK_AUTO_PUBLISHED');
+    const messages = [];
+    if (created.length) messages.push(created.length === 1 ? `Đã tạo xong bài “${created[0].topic_title}”.` : `Đã tạo xong ${created.length} bài.`);
+    if (published.length) messages.push(published.length === 1 ? `Đã đăng bài “${published[0].topic_title}” lên Facebook.` : `Đã đăng ${published.length} bài lên Facebook.`);
+    toast(messages.join(' '));
+  } catch {
+    // Background notifications must not interrupt the current screen.
+  }
 }
 
 function setPublishLoading(loading, idleText = 'Đăng bài') {
@@ -104,6 +138,11 @@ function readImageFile(file) {
   });
 }
 
+async function copyJson(value, successMessage) {
+  await navigator.clipboard.writeText(JSON.stringify(value, null, 2));
+  toast(successMessage);
+}
+
 // API Fetch Helpers
 async function api(url, options = {}) {
   const res = await fetch(url, {
@@ -143,12 +182,12 @@ async function render() {
   const otherRoutes = Object.entries(routes).filter(([key]) => !postRoutes.includes(key));
   $('#nav').innerHTML = `
     <div class="nav-group ${postRoutes.includes(r) || r === 'studio' ? 'open' : ''}">
-      <div class="nav-group-title"><i>▤</i><span>Quản lý bài</span></div>
+      <div class="nav-group-title">${icon('newspaper')}<span>Quản lý bài</span></div>
       <div class="nav-children">
-        ${postRoutes.map(k => `<a href="#${k}" class="${r === k ? 'active' : ''}"><i>${routes[k][0]}</i>${routes[k][1]}</a>`).join('')}
+        ${postRoutes.map(k => `<a href="#${k}" class="${r === k ? 'active' : ''}">${icon(routes[k][0])}${routes[k][1]}</a>`).join('')}
       </div>
     </div>
-    ${otherRoutes.map(([k, v]) => `<a href="#${k}" class="${r === k ? 'active' : ''}"><i>${v[0]}</i>${v[1]}</a>`).join('')}
+    ${otherRoutes.map(([k, v]) => `<a href="#${k}" class="${r === k ? 'active' : ''}">${icon(v[0])}${v[1]}</a>`).join('')}
   `;
   const views = {
     create_posts: renderQueue,
@@ -165,6 +204,7 @@ async function render() {
   if (views[r]) {
     await views[r]();
   }
+  renderIcons();
 }
 
 async function renderQueue() {
@@ -185,6 +225,7 @@ async function renderQueue() {
 
   const publishingStatuses = ['APPROVED', 'READY_FOR_MANUAL_UPLOAD', 'MANUALLY_UPLOADED'];
   const statusOptions = Object.entries(labels).filter(([key]) => queueMode !== 'publishing' || publishingStatuses.includes(key));
+  if (filter && !statusOptions.some(([key]) => key === filter)) filter = '';
   let jobs = cachedPosts.filter(j =>
     (queueMode !== 'publishing' || publishingStatuses.includes(j.status)) &&
     (!filter || j.status === filter) &&
@@ -192,14 +233,15 @@ async function renderQueue() {
   );
 
   const readyCount = cachedPosts.filter(j => j.status === 'READY_FOR_MANUAL_UPLOAD').length;
-  const reviewCount = cachedPosts.filter(j => j.status === 'NEEDS_REVIEW').length;
+  const approvedCount = cachedPosts.filter(j => j.status === 'APPROVED').length;
   const uploadedCount = cachedPosts.filter(j => j.status === 'MANUALLY_UPLOADED').length;
+  const publishingCount = cachedPosts.filter(j => publishingStatuses.includes(j.status)).length;
 
   $('#view').innerHTML = `
     <div class="stats" ${queueMode === 'publishing' ? '' : 'style="display:none"'}>
       ${[
-        [cachedPosts.length, 'Tổng số bài viết', 'Lưu bền vững trong Database'],
-        [reviewCount, 'Chờ duyệt nội dung', 'Cần kiểm tra caption và ảnh'],
+        [publishingCount, 'Trong luồng đăng', 'Chỉ gồm bài đã duyệt và đã đăng'],
+        [approvedCount, 'Đã duyệt', 'Đủ điều kiện chuyển sang đăng bài'],
         [readyCount, 'Sẵn sàng đăng', 'Đang chờ đăng theo chế độ Profile'],
         [uploadedCount, 'Đã đăng hoàn tất', 'Đã lưu vết kiểm toán']
       ].map(x => `
@@ -218,8 +260,8 @@ async function renderQueue() {
           <p class="muted">Chọn các lịch trong Sheet rồi chạy tạo caption, ảnh và bộ OUTPUT.</p>
         </div>
         <div class="toolbar">
-          <button id="generateSelected" class="primary">⚡ Tạo bài đã chọn</button>
-          <button id="syncAllFromCreate">📥 Đồng bộ tất cả Sheet</button>
+          <button id="generateSelected" class="primary">${icon('sparkles')}Tạo bài đã chọn</button>
+          <button id="syncAllFromCreate">${icon('refresh-cw')}Đồng bộ tất cả Sheet</button>
         </div>
       </div>
       <div class="tablewrap">
@@ -239,9 +281,9 @@ async function renderQueue() {
                 <td class="schedule-cell">${esc(t.content_date || 'Chưa có ngày')} <small>${esc(t.publish_time || 'Chưa có giờ')} · GMT+7</small></td>
                 <td class="status-cell">${t.post_id ? badge(t.post_status) : '<span class="tag">Chưa tạo</span>'}</td>
                 <td><div class="row-actions">${finished
-                  ? `<button data-open="${esc(t.post_id)}">Mở bài</button>`
-                  : `<button data-create-topic="${esc(t.id)}" ${canCreateOne ? '' : 'disabled'} class="primary">⚡ Tạo bài</button>`}
-                  <button data-delete-topic="${esc(t.id)}" class="icon-button" title="Xóa lịch khỏi tool" aria-label="Xóa lịch">🗑</button></div>
+                  ? `<button data-open="${esc(t.post_id)}">${icon('external-link')}Mở bài</button>`
+                  : `<button data-create-topic="${esc(t.id)}" ${canCreateOne ? '' : 'disabled'} class="primary">${icon('sparkles')}Tạo bài</button>`}
+                  <button data-delete-topic="${esc(t.id)}" class="icon-button" title="Xóa lịch khỏi tool" aria-label="Xóa lịch">${icon('trash-2')}</button></div>
                 </td>
               </tr>`;
             }).join('') || '<tr><td colspan="6" class="empty">Chưa có lịch từ Sheet. Hãy bấm <b>Đồng bộ tất cả Sheet</b>.</td></tr>'}
@@ -252,10 +294,15 @@ async function renderQueue() {
 
     <section class="panel" ${queueMode === 'create_posts' ? 'style="display:none"' : ''}>
       <div class="panelhead">
-        <h2>${queueMode === 'publishing' ? 'Quản lý đăng bài' : 'Danh sách bài đã tạo'} <span class="pill">/ ${jobs.length} bài viết</span></h2>
+        <div>
+          <h2>${queueMode === 'publishing' ? 'Quản lý đăng bài' : 'Danh sách bài đã tạo'} <span class="pill">/ ${jobs.length} bài viết</span></h2>
+          <p class="muted">${queueMode === 'publishing'
+            ? 'Đăng, đăng lại và truy cập bài đã xuất bản trên Facebook.'
+            : 'Kiểm tra, chỉnh sửa hoặc xóa sản phẩm nội dung đã tạo.'}</p>
+        </div>
         <div class="toolbar">
-          <button id="publishSelectedPosts" class="primary" ${queueMode === 'publishing' ? '' : 'style="display:none"'}>Đăng bài đã chọn</button>
-          <button id="deleteSelectedPosts" ${queueMode === 'created_posts' ? '' : 'style="display:none"'}>🗑 Xóa bài đã chọn</button>
+          <button id="publishSelectedPosts" class="primary" ${queueMode === 'publishing' ? '' : 'style="display:none"'}>${icon('send')}Đăng bài đã chọn</button>
+          <button id="deleteSelectedPosts" ${queueMode === 'created_posts' ? '' : 'style="display:none"'}>${icon('trash-2')}Xóa bài đã chọn</button>
           <input id="search" type="search" placeholder="Tìm chủ đề hoặc thương hiệu..." value="${esc(query)}">
           <select id="filter">
             <option value="">${queueMode === 'publishing' ? 'Tất cả trạng thái đăng' : 'Tất cả trạng thái'}</option>
@@ -294,19 +341,23 @@ async function renderQueue() {
                   <td>${esc(j.content_date)} <small>${esc(j.scheduled_time || '09:00')} · GMT+7</small></td>
                   <td>${badge(j.status)}</td>
                   <td><div class="row-actions">
-                    ${['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(j.status)
-                      ? `<button data-publish="${j.id}" class="primary" title="Đăng bài lên Facebook">Đăng</button>`
-                      : j.status === 'MANUALLY_UPLOADED'
-                        ? `<button data-publish="${j.id}" title="Đăng lại lên Facebook" style="border:1px solid #1877f2;color:#1877f2;background:#f0f7ff;font-weight:600">↻ Đăng lại</button>`
+                    ${queueMode === 'publishing' && ['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(j.status)
+                      ? `<button data-publish="${j.id}" class="primary" title="Đăng bài lên Facebook">${icon('send')}Đăng</button>`
+                      : queueMode === 'publishing' && j.status === 'MANUALLY_UPLOADED'
+                        ? `<button data-publish="${j.id}" title="Đăng lại lên Facebook" style="border:1px solid #1877f2;color:#1877f2;background:#f0f7ff;font-weight:600">${icon('refresh-cw')}Đăng lại</button>`
                         : ''}
-                    <button data-open="${j.id}" title="Mở bài trong Studio" class="${j.status === 'READY_FOR_MANUAL_UPLOAD' ? 'primary' : ''}">
-                      ${j.status === 'READY_FOR_MANUAL_UPLOAD' ? 'Xem' : 'Mở'}
+                    <button data-open="${j.id}" title="Mở bài trong Studio" class="${queueMode === 'created_posts' ? 'primary' : ''}">
+                      ${queueMode === 'publishing' ? 'Xem nội dung' : `${icon('pencil')}Mở / sửa`}
                     </button>
-                    <button data-delete="${j.id}" class="icon-button" title="Xóa bài" aria-label="Xóa bài">🗑</button>
+                    ${queueMode === 'publishing' && j.manual_post_url ? `<a class="button compact" href="${esc(j.manual_post_url)}" target="_blank" rel="noopener noreferrer" title="Xem bài trên Facebook">${icon('external-link')}Xem bài</a>` : ''}
+                    ${queueMode === 'publishing' && j.manual_post_url ? `<button data-copy-post-link="${esc(j.manual_post_url)}" title="Sao chép link bài Facebook">${icon('copy')}Copy link</button>` : ''}
+                    ${queueMode === 'created_posts' ? `<button data-delete="${j.id}" class="icon-button" title="Xóa bài" aria-label="Xóa bài">${icon('trash-2')}</button>` : ''}
                   </div></td>
                 </tr>
               `;
-            }).join('') || '<tr><td colspan="6" class="empty">Chưa có bài viết. Chọn lịch ở bảng phía trên rồi bấm <b>Tạo bài đã chọn</b>.</td></tr>'}
+            }).join('') || `<tr><td colspan="6" class="empty">${queueMode === 'publishing'
+              ? 'Chưa có bài nào đã duyệt hoặc sẵn sàng đăng.'
+              : 'Chưa có bài viết. Hãy tạo bài từ lịch đã đồng bộ.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -431,10 +482,32 @@ async function renderQueue() {
     };
   });
   document.querySelectorAll('[data-publish]').forEach(button => {
-    button.onclick = () => {
+    button.onclick = async () => {
       const post = cachedPosts.find(item => item.id === button.dataset.publish);
       if (!post) return;
       const isRePublish = post.status === 'MANUALLY_UPLOADED';
+      if (isRePublish) {
+        const idleContent = button.innerHTML;
+        button.disabled = true;
+        button.classList.add('publish-loading');
+        button.innerHTML = '<span class="button-spinner" aria-hidden="true"></span>Đang đăng lại...';
+        try {
+          const res = await api(`/api/posts/${encodeURIComponent(post.id)}/publish-facebook`, {
+            method: 'POST',
+            body: JSON.stringify({ pageTarget: post.facebook_page_id || '', note: '' })
+          });
+          toast(res.message || 'Đã đăng lại bài thành công lên Facebook!');
+          await renderQueue();
+        } catch (err) {
+          toast(`Lỗi đăng lại bài: ${err.message}`, true);
+          if (button.isConnected) {
+            button.disabled = false;
+            button.classList.remove('publish-loading');
+            button.innerHTML = idleContent;
+          }
+        }
+        return;
+      }
       modal(isRePublish ? 'Đăng lại bài lên Facebook' : 'Đăng bài lên Facebook', `
         <p class="muted">
           ${isRePublish ? '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#fef3c7;color:#b45309;font-weight:600;font-size:12px;margin-bottom:8px">⚠️ Bài viết này đã được đăng trước đó</span><br>' : ''}
@@ -445,7 +518,7 @@ async function renderQueue() {
         </label>
         <label>Phương thức đăng
           <select name="publishMethod" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--line);margin-top:5px">
-            <option value="auto">🚀 Tự động đăng qua Meta Graph API (Khuyên dùng)</option>
+            <option value="auto">Tự động đăng qua Meta Graph API (Khuyên dùng)</option>
             <option value="manual">${isRePublish ? 'Xác nhận đã đăng lại thủ công' : 'Đã đăng thủ công trên Facebook (Ghi nhận)'}</option>
           </select>
         </label>
@@ -493,6 +566,16 @@ async function renderQueue() {
       }
     };
   });
+  document.querySelectorAll('[data-copy-post-link]').forEach(button => {
+    button.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copyPostLink);
+        toast('Đã copy link bài Facebook.');
+      } catch (error) {
+        toast(`Không thể copy link: ${error.message}`, true);
+      }
+    };
+  });
 }
 
 function modal(title, body, fn) {
@@ -503,6 +586,7 @@ function modal(title, body, fn) {
     if ((await fn(new FormData(e.target))) !== false) $('#modal').close();
   };
   $('#modal').showModal();
+  renderIcons();
 }
 
 async function newJob() {
@@ -580,7 +664,7 @@ async function newJob() {
 }
 
 async function runAutomation(button, topicIds = null, scheduleOverrides = {}) {
-  const originalText = button?.textContent || '⚡ Tạo bài tự động';
+  const originalContent = button?.innerHTML || `${icon('sparkles')}Tạo bài tự động`;
   if (button) {
     button.disabled = true;
     button.textContent = 'Đang tạo...';
@@ -600,28 +684,28 @@ async function runAutomation(button, topicIds = null, scheduleOverrides = {}) {
   } finally {
     if (button?.isConnected) {
       button.disabled = false;
-      button.textContent = originalText;
+      button.innerHTML = originalContent;
     }
   }
 }
 
 async function syncAllProfiles(button, onDone = null) {
-  const originalText = button?.textContent || '📥 Đồng bộ tất cả';
+  const originalContent = button?.innerHTML || `${icon('refresh-cw')}Đồng bộ tất cả`;
   if (button) {
     button.disabled = true;
-    button.textContent = '⏳ Đang đồng bộ tất cả...';
+    button.textContent = 'Đang đồng bộ tất cả...';
   }
   try {
     const result = await api('/api/profiles/sync-all', { method: 'POST' });
     const summary = result.summary || {};
-    toast(`Đồng bộ ${summary.succeeded || 0}/${summary.profiles || 0} profile · Thêm: ${summary.imported || 0} · Cập nhật: ${summary.updated || 0} · Gỡ lịch: ${summary.removed || 0} · Lưu trữ: ${summary.archivedPosts || 0} · Xóa bài: ${summary.removedPosts || 0}`, !result.success);
+    toast(`Đồng bộ ${summary.succeeded || 0}/${summary.profiles || 0} profile · Rule mới: ${summary.rulesUpdated || 0} · Thêm: ${summary.imported || 0} · Cập nhật: ${summary.updated || 0} · Gỡ lịch: ${summary.removed || 0} · Lưu trữ: ${summary.archivedPosts || 0} · Xóa bài: ${summary.removedPosts || 0}`, !result.success);
     if (onDone) await onDone();
   } catch (err) {
     toast(`Lỗi đồng bộ tất cả: ${err.message}`, true);
   } finally {
     if (button?.isConnected) {
       button.disabled = false;
-      button.textContent = originalText;
+      button.innerHTML = originalContent;
     }
   }
 }
@@ -661,7 +745,7 @@ async function renderStudio() {
     ${isReadyForManual ? `
       <div class="notice" style="background:#eaf8ef;border-color:#bce5ca;color:#185a31">
         <strong>✅ Bộ bài đã được xuất an toàn lên Google Drive!</strong>
-        Bài viết đang sẵn sàng để người vận hành sao chép caption, tải ảnh và đăng lên Fanpage.
+        Bài viết đang sẵn sàng để đăng lên Fanpage.
       </div>
     ` : ''}
 
@@ -681,21 +765,18 @@ async function renderStudio() {
     ${canPublish || isUploaded ? `
       <section class="panel" style="border: 2px solid #367260; background:#fbfdfc">
         <div class="panelhead">
-          <h2>🚀 Vận hành Đăng bài (Publishing Studio)</h2>
+          <h2>${icon('send')}Vận hành Đăng bài (Publishing Studio)</h2>
           <span class="tag published">${isUploaded ? 'Đã hoàn tất đăng' : 'Sẵn sàng đăng'}</span>
         </div>
         <div class="actions">
           <button id="autoPublishFb" class="primary" style="background:#1877f2;border-color:#1877f2;color:white">
-            ${isUploaded ? '↻ Đăng lại lên Facebook' : '🚀 Tự động đăng lên Facebook'}
+            ${icon(isUploaded ? 'refresh-cw' : 'send')}${isUploaded ? 'Đăng lại lên Facebook' : 'Tự động đăng lên Facebook'}
           </button>
-          <button id="copyCaption">📋 Sao chép toàn bộ Caption</button>
-          ${post.image_data ? `<button id="downloadImage">📥 Tải ảnh Final</button>` : ''}
-          ${post.drive_folder_id ? `<a href="https://drive.google.com/drive/folders/${esc(post.drive_folder_id)}" target="_blank" class="button" style="padding:10px 16px;text-decoration:none;border:1px solid var(--line);border-radius:8px;background:white;color:#273957;font-weight:600">📁 Mở thư mục bài trên Drive</a>` : ''}
+          ${post.drive_folder_id ? `<a href="https://drive.google.com/drive/folders/${esc(post.drive_folder_id)}" target="_blank" class="button" style="padding:10px 16px;text-decoration:none;border:1px solid var(--line);border-radius:8px;background:white;color:#273957;font-weight:600">${icon('folder-open')}Mở thư mục bài trên Drive</a>` : ''}
           <button id="markUploaded">${isUploaded ? 'Đánh dấu đã đăng lại thủ công' : 'Đánh dấu đã đăng thủ công'}</button>
           ${isUploaded ? `
             <div style="font-size:14px;color:#2b6b52;padding:10px 0;width:100%">
               Đã đăng lúc: <b>${new Date(post.manually_uploaded_at).toLocaleString('vi-VN')}</b>
-              ${post.manual_post_url ? ` · <a href="${esc(post.manual_post_url)}" target="_blank" style="color:#1877f2;text-decoration:underline;font-weight:600">Xem bài viết trên Facebook ↗</a>` : ''}
               ${post.manual_target_page ? ` · Page đích: <b>${esc(post.manual_target_page)}</b>` : ''}
             </div>
           ` : ''}
@@ -714,15 +795,15 @@ async function renderStudio() {
             <input id="headline" value="${esc(post.headline || '')}" placeholder="Tiêu đề bài viết...">
           </label>
           <label>Nội dung Caption
-            <textarea id="caption" rows="12" placeholder="Nhấn nút ✨ AI Viết Caption hoặc nhập nội dung...">${esc(post.caption || '')}</textarea>
+            <textarea id="caption" rows="12" placeholder="Nhấn nút AI Viết Caption hoặc nhập nội dung...">${esc(post.caption || '')}</textarea>
           </label>
           <label>Kêu gọi hành động (CTA)
             <input id="cta" value="${esc(post.cta || '')}" placeholder="Ví dụ: Nhắn tin hoặc gọi hotline để nhận tư vấn chi tiết.">
           </label>
 
           <div class="actions">
-            <button id="aiCaption" class="primary">✨ Sinh Caption bằng AI (OpenAI)</button>
-            ${post.status === 'DRAFT' && changeRequestReason ? `<button id="regenerateCaption">↻ Sinh lại theo yêu cầu sửa</button>` : ''}
+            <button id="aiCaption" class="primary">${icon('sparkles')}Sinh Caption bằng AI (OpenAI)</button>
+            ${post.status === 'DRAFT' && changeRequestReason ? `<button id="regenerateCaption">${icon('refresh-cw')}Sinh lại theo yêu cầu sửa</button>` : ''}
             <button id="saveCaption">Lưu chỉnh sửa Revision</button>
           </div>
           <p class="muted" id="aiCaptionStatus">Tự động áp dụng Rule thương hiệu của <b>${esc(post.profile_name)}</b>.</p>
@@ -736,7 +817,7 @@ async function renderStudio() {
           ` : `
             <div class="placeholder">
               <strong>Chưa có hình ảnh</strong>
-              <span>Bấm nút <b>✨ Sinh ảnh bằng AI</b> hoặc tải ảnh từ máy tính.</span>
+              <span>Bấm nút <b>Sinh ảnh bằng AI</b> hoặc tải ảnh từ máy tính.</span>
             </div>
           `}
 
@@ -746,7 +827,7 @@ async function renderStudio() {
           ${post.sheet_image_rule ? `<div class="image-rule-note"><b>Rule ảnh từ Sheet</b><span>${esc(post.sheet_image_rule)}</span></div>` : ''}
           <p class="muted">Ưu tiên phong cách: prompt nhập tay → Rule ảnh từ Sheet → Rule chung của Content Profile.</p>
           <div class="actions" style="margin: 16px 0 10px;">
-            <button id="aiImage" class="primary">✨ Sinh ảnh bằng AI</button>
+            <button id="aiImage" class="primary">${icon('image-plus')}Sinh ảnh bằng AI</button>
           </div>
           <p class="muted" id="aiImageStatus"></p>
 
@@ -771,7 +852,7 @@ async function renderStudio() {
             <div style="margin-top:20px;padding-top:15px;border-top:1px solid var(--line)">
               <p style="font-size:14px;color:#285de5;font-weight:600">Đã duyệt! Hãy xuất bộ bài lên Google Drive:</p>
               <button id="exportDriveBtn" class="primary" style="width:100%;margin-top:6px;background:#188038;border-color:#188038">
-                📤 Xuất 4 tệp lên Google Drive (OUTPUT)
+                ${icon('cloud-upload')}Xuất 4 tệp lên Google Drive (OUTPUT)
               </button>
               <p class="muted" id="exportStatus" style="font-size:12px;margin-top:6px">Gồm: caption.md, image.png, post.json, REVIEW.md</p>
             </div>
@@ -798,7 +879,7 @@ async function renderStudio() {
   $('#aiCaption').onclick = async () => {
     const btn = $('#aiCaption');
     btn.disabled = true;
-    btn.textContent = '⏳ Đang viết caption với GPT...';
+    btn.textContent = 'Đang viết caption với GPT...';
     try {
       const res = await api(`/api/posts/${post.id}/generate-caption`, { method: 'POST' });
       toast('Đã tạo caption mới bằng AI thành công!');
@@ -806,7 +887,7 @@ async function renderStudio() {
     } catch (err) {
       toast(`Lỗi tạo caption: ${err.message}`, true);
       btn.disabled = false;
-      btn.textContent = '✨ Sinh Caption bằng AI (OpenAI)';
+      btn.innerHTML = `${icon('sparkles')}Sinh Caption bằng AI (OpenAI)`;
     }
   };
 
@@ -824,7 +905,7 @@ async function renderStudio() {
         const revisionPrompt = `YÊU CẦU CHỈNH SỬA:\n${promptContext}\n\nNỘI DUNG HIỆN TẠI CẦN VIẾT LẠI:\nHeadline: ${post.headline || ''}\nCaption: ${post.caption || ''}\nCTA: ${post.cta || ''}`;
         try {
           regenerateCaptionBtn.disabled = true;
-          regenerateCaptionBtn.textContent = '⏳ Đang sinh lại nội dung...';
+          regenerateCaptionBtn.textContent = 'Đang sinh lại nội dung...';
           await api(`/api/posts/${post.id}/generate-caption`, {
             method: 'POST',
             body: JSON.stringify({ promptContext: revisionPrompt })
@@ -834,7 +915,7 @@ async function renderStudio() {
         } catch (err) {
           toast(`Lỗi sinh lại nội dung: ${err.message}`, true);
           regenerateCaptionBtn.disabled = false;
-          regenerateCaptionBtn.textContent = '↻ Sinh lại theo yêu cầu sửa';
+          regenerateCaptionBtn.innerHTML = `${icon('refresh-cw')}Sinh lại theo yêu cầu sửa`;
           return false;
         }
       });
@@ -856,7 +937,7 @@ async function renderStudio() {
     } catch (err) {
       toast(`Lỗi tạo ảnh: ${err.message}`, true);
       btn.disabled = false;
-      btn.textContent = '✨ Sinh ảnh bằng AI';
+      btn.innerHTML = `${icon('image-plus')}Sinh ảnh bằng AI`;
     }
   };
 
@@ -953,7 +1034,7 @@ async function renderStudio() {
   if (exportBtn) {
     exportBtn.onclick = async () => {
       exportBtn.disabled = true;
-      exportBtn.textContent = '⏳ Đang tải 4 tệp lên Google Drive...';
+      exportBtn.textContent = 'Đang tải 4 tệp lên Google Drive...';
       try {
         const res = await api(`/api/posts/${post.id}/export`, { method: 'POST' });
         toast('Đã xuất bộ bài lên Google Drive thành công!');
@@ -961,40 +1042,35 @@ async function renderStudio() {
       } catch (err) {
         toast(`Lỗi xuất Drive: ${err.message}`, true);
         exportBtn.disabled = false;
-        exportBtn.textContent = '📤 Xuất 4 tệp lên Google Drive (OUTPUT)';
+        exportBtn.innerHTML = `${icon('cloud-upload')}Xuất 4 tệp lên Google Drive (OUTPUT)`;
       }
-    };
-  }
-
-  // Copy caption
-  const copyBtn = $('#copyCaption');
-  if (copyBtn) {
-    copyBtn.onclick = () => {
-      const fullText = `${post.headline || ''}\n\n${post.caption}\n\n${post.cta ? `${post.cta}` : ''}`.trim();
-      navigator.clipboard.writeText(fullText).then(() => {
-        toast('Đã sao chép caption vào bộ nhớ tạm!');
-      }).catch(() => {
-        toast('Không sao chép được, hãy bôi đen text để copy.', true);
-      });
-    };
-  }
-
-  // Download image
-  const downloadBtn = $('#downloadImage');
-  if (downloadBtn && post.image_data) {
-    downloadBtn.onclick = () => {
-      const a = document.createElement('a');
-      a.href = post.image_data;
-      a.download = `post_${post.id}_image.png`;
-      a.click();
     };
   }
 
   // Auto Publish to Facebook
   const autoPublishFbBtn = $('#autoPublishFb');
   if (autoPublishFbBtn) {
-    autoPublishFbBtn.onclick = () => {
+    autoPublishFbBtn.onclick = async () => {
       const isRePublish = post.status === 'MANUALLY_UPLOADED';
+      if (isRePublish) {
+        autoPublishFbBtn.disabled = true;
+        autoPublishFbBtn.classList.add('publish-loading');
+        autoPublishFbBtn.innerHTML = '<span class="button-spinner" aria-hidden="true"></span>Đang đăng lại...';
+        try {
+          const res = await api(`/api/posts/${post.id}/publish-facebook`, {
+            method: 'POST',
+            body: JSON.stringify({ pageTarget: post.facebook_page_id || '', note: '' })
+          });
+          toast(res.message || 'Đã đăng lại bài thành công lên Facebook!');
+          await renderStudio();
+        } catch (err) {
+          toast(`Lỗi đăng lại bài: ${err.message}`, true);
+          autoPublishFbBtn.disabled = false;
+          autoPublishFbBtn.classList.remove('publish-loading');
+          autoPublishFbBtn.innerHTML = `${icon('refresh-cw')}Đăng lại lên Facebook`;
+        }
+        return;
+      }
       modal(isRePublish ? 'Đăng lại bài tự động lên Facebook' : 'Đăng bài tự động lên Facebook', `
         <p class="muted">
           ${isRePublish ? '<span style="display:inline-block;padding:4px 8px;border-radius:4px;background:#fef3c7;color:#b45309;font-weight:600;font-size:12px;margin-bottom:8px">⚠️ Bài viết này đã được đăng trước đó</span><br>' : ''}
@@ -1023,7 +1099,7 @@ async function renderStudio() {
         } catch (err) {
           toast(`Lỗi đăng bài: ${err.message}`, true);
           autoPublishFbBtn.disabled = false;
-          autoPublishFbBtn.textContent = isRePublish ? '↻ Đăng lại lên Facebook' : '🚀 Tự động đăng lên Facebook';
+          autoPublishFbBtn.innerHTML = `${icon(isRePublish ? 'refresh-cw' : 'send')}${isRePublish ? 'Đăng lại lên Facebook' : 'Tự động đăng lên Facebook'}`;
           setPublishLoading(false, isRePublish ? 'Đăng lại' : 'Đăng bài');
           return false;
         }
@@ -1066,14 +1142,16 @@ async function renderStudio() {
 async function renderProfiles() {
   await fetchProfiles();
   $('#view').innerHTML = `
-    <div class="panelhead">
+    <div class="panelhead profiles-panelhead">
       <div>
         <h2>Quản lý Content Profiles theo thương hiệu</h2>
         <p class="muted">Mỗi profile gắn với một thư mục Google Drive (RULES, TOPICS, MATERIALS, OUTPUT).</p>
       </div>
-      <div class="toolbar">
-        <button id="syncAllProfiles">📥 Đồng bộ tất cả</button>
-        <button id="addProfile">＋ Thêm profile mới</button>
+      <div class="toolbar profiles-toolbar">
+        <button id="syncAllProfiles">${icon('refresh-cw')}Đồng bộ tất cả</button>
+        <button id="copyProfilesConfig">${icon('copy')}Copy cấu hình</button>
+        <button id="importProfilesConfig">${icon('file-up')}Import cấu hình</button>
+        <button id="addProfile">${icon('plus')}Thêm profile mới</button>
       </div>
     </div>
     <div class="cards">
@@ -1097,12 +1175,12 @@ async function renderProfiles() {
           </div>
           <div class="cardfoot">
             <div>
-              <button data-sync="${p.id}" title="Đồng bộ Google Sheet" ${p.sheet_id_topics ? '' : 'disabled'}>Đồng bộ</button>
+              <button data-sync="${p.id}" title="Đồng bộ Google Sheet" ${p.sheet_id_topics ? '' : 'disabled'}>${icon('refresh-cw')}Đồng bộ</button>
               ${googleSheetUrl(p.sheet_id_topics) ? `<a class="button compact" href="${esc(googleSheetUrl(p.sheet_id_topics))}" target="_blank" rel="noopener noreferrer" title="Mở Google Sheet">Mở Sheet ↗</a>` : ''}
               ${facebookPageUrl(p.facebook_page_id) ? `<a class="button compact" href="${esc(facebookPageUrl(p.facebook_page_id))}" target="_blank" rel="noopener noreferrer" title="Mở Facebook Page ${esc(p.page_name || p.name)}">Mở Page ↗</a>` : ''}
-              <button data-edit="${p.id}">Sửa</button>
+              <button data-edit="${p.id}">${icon('pencil')}Sửa</button>
               <button data-toggle="${p.id}">${p.active ? 'Tạm dừng' : 'Bật'}</button>
-              <button class="danger" data-delete-profile="${p.id}">Xóa</button>
+              <button class="danger" data-delete-profile="${p.id}">${icon('trash-2')}Xóa</button>
             </div>
           </div>
         </article>
@@ -1111,6 +1189,40 @@ async function renderProfiles() {
   `;
 
   $('#addProfile').onclick = () => editProfile();
+  $('#copyProfilesConfig').onclick = async () => {
+    const keys = ['id', 'name', 'type', 'brand', 'language', 'timezone', 'folder_id_rules', 'folder_id_topics', 'folder_id_materials', 'folder_id_output', 'sheet_id_topics', 'page_name', 'facebook_page_id', 'color', 'workflow_mode', 'retain_removed_posts', 'logo_data', 'logo_mime', 'time', 'active'];
+    try {
+      await copyJson({ type: 'hbg-content-profiles', version: 1, profiles: cachedProfiles.map(profile => Object.fromEntries(keys.map(key => [key, profile[key]]))) }, 'Đã copy cấu hình Content Profiles.');
+    } catch (error) {
+      toast(`Không thể copy cấu hình: ${error.message}`, true);
+    }
+  };
+  $('#importProfilesConfig').onclick = () => {
+    modal('Import cấu hình Content Profiles', `
+      <label>Dán JSON cấu hình
+        <textarea name="configJson" rows="14" required placeholder='{"type":"hbg-content-profiles","profiles":[...]}'></textarea>
+      </label>
+      <p class="muted">Profile trùng ID sẽ được cập nhật; ID mới sẽ tạo profile mới. Bài viết và Rule Version không bị thay đổi.</p>
+    `, async form => {
+      try {
+        const parsed = JSON.parse(form.get('configJson'));
+        const profiles = Array.isArray(parsed) ? parsed : parsed.profiles;
+        if (!Array.isArray(profiles) || !profiles.length) throw new Error('Không tìm thấy danh sách profiles hợp lệ.');
+        const existingIds = new Set(cachedProfiles.map(profile => profile.id));
+        for (const profile of profiles) {
+          if (!profile?.id || !profile?.name || !profile?.type) throw new Error('Mỗi profile phải có id, name và type.');
+          const url = existingIds.has(profile.id) ? `/api/profiles/${encodeURIComponent(profile.id)}` : '/api/profiles';
+          await api(url, { method: existingIds.has(profile.id) ? 'PATCH' : 'POST', body: JSON.stringify(profile) });
+          existingIds.add(profile.id);
+        }
+        toast(`Đã import ${profiles.length} Content Profile.`);
+        renderProfiles();
+      } catch (error) {
+        toast(`Import thất bại: ${error.message}`, true);
+        return false;
+      }
+    });
+  };
   $('#syncAllProfiles').onclick = e => syncAllProfiles(e.currentTarget, renderProfiles);
   document.querySelectorAll('[data-edit]').forEach(b => {
     b.onclick = () => editProfile(cachedProfiles.find(p => p.id === b.dataset.edit));
@@ -1131,15 +1243,16 @@ async function renderProfiles() {
   document.querySelectorAll('[data-sync]').forEach(b => {
     b.onclick = async () => {
       b.disabled = true;
-      b.textContent = '⏳ Đang đồng bộ...';
+      b.textContent = 'Đang đồng bộ...';
       try {
         const res = await api(`/api/profiles/${b.dataset.sync}/sync-sheet`, { method: 'POST' });
-        toast(`Đã đồng bộ xong! Thêm: ${res.imported}, Cập nhật: ${res.updated}, Gỡ: ${res.removed || 0} lịch, Lưu trữ: ${res.archivedPosts || 0}, Xóa bài: ${res.removedPosts || 0}`);
+        const ruleText = res.rule?.changed ? `Rule v${res.rule.version} mới` : `Rule v${res.rule?.version || '—'}`;
+        toast(`Đã đồng bộ ${ruleText} · Thêm: ${res.imported}, Cập nhật: ${res.updated}, Gỡ: ${res.removed || 0} lịch, Lưu trữ: ${res.archivedPosts || 0}, Xóa bài: ${res.removedPosts || 0}`);
         renderProfiles();
       } catch (err) {
         toast(`Lỗi đồng bộ Sheet: ${err.message}`, true);
         b.disabled = false;
-        b.textContent = '📥 Đồng bộ Sheet';
+        b.innerHTML = `${icon('refresh-cw')}Đồng bộ Sheet`;
       }
     };
   });
@@ -1258,25 +1371,32 @@ async function renderRules() {
 
   $('#view').innerHTML = `
     <div class="cards">
-      ${rulesByProfile.map(({ profile, latestRule }) => `
-        <section class="card">
-          <div class="panelhead">
-            <h2>${esc(profile.name)}</h2>
-            <span class="tag">Rule v${latestRule?.version || 1}</span>
-          </div>
-          <details class="rule-details">
-            <summary title="Bấm để xem toàn bộ quy tắc">
-              <span class="rule-preview">${esc(latestRule?.content_markdown || 'Chưa có rule')}</span>
-              <span class="rule-toggle"><span class="show-label">Xem đầy đủ</span><span class="hide-label">Thu gọn</span>⌄</span>
-            </summary>
-            <div class="ruletext">${esc(latestRule?.content_markdown || 'Chưa có rule')}</div>
-          </details>
-          <div class="actions">
-            <button data-rule="${profile.id}" title="Chỉnh sửa và tạo Rule Version mới">Sửa / tạo phiên bản</button>
-            ${latestRule ? `<button class="danger" data-delete-rules="${profile.id}">Xóa Rule</button>` : ''}
-          </div>
-        </section>
-      `).join('')}
+      ${rulesByProfile.map(({ profile, latestRule }) => {
+        const ruleContent = latestRule?.content_markdown || 'Chưa có rule';
+        const ruleLines = ruleContent.split(/\r?\n/).length;
+        const isLongRule = ruleContent.length > 1600 || ruleLines > 24;
+        return `
+          <section class="card">
+            <div class="panelhead">
+              <h2>${esc(profile.name)}</h2>
+              <span class="tag">Rule v${latestRule?.version || 1}</span>
+            </div>
+            ${isLongRule ? `
+              <details class="rule-details">
+                <summary title="Bấm để xem toàn bộ quy tắc">
+                  <span class="rule-preview">${esc(ruleContent)}</span>
+                  <span class="rule-toggle"><span class="show-label">Xem đầy đủ</span><span class="hide-label">Thu gọn</span></span>
+                </summary>
+                <div class="ruletext">${esc(ruleContent)}</div>
+              </details>
+            ` : `<div class="ruletext ruletext-inline">${esc(ruleContent)}</div>`}
+            <div class="actions">
+              <button data-rule="${profile.id}" title="Chỉnh sửa và tạo Rule Version mới">${icon('pencil')}Sửa / tạo phiên bản</button>
+              ${latestRule ? `<button class="danger" data-delete-rules="${profile.id}">${icon('trash-2')}Xóa Rule</button>` : ''}
+            </div>
+          </section>
+        `;
+      }).join('')}
     </div>
   `;
 
@@ -1418,7 +1538,7 @@ async function renderCalendar() {
         return `<button class="calendar-entry" ${item.postId ? `data-open-calendar="${esc(item.postId)}"` : `data-create-calendar="${esc(item.syncedTopicId)}"`}>
           <i style="--profile-color:${esc(item.profileColor)}"></i>
           <span><b>${esc(item.time)} · ${esc(item.profileName)}</b><strong>${esc(item.title)}</strong><small>${esc(statusText)}</small></span>
-          <em>${item.postId ? 'Mở bài' : '＋ Tạo bài'}</em>
+          <em>${item.postId ? 'Mở bài' : 'Tạo bài'}</em>
         </button>`;
       }).join('');
       $('#calendarDayDialog').showModal();
@@ -1449,7 +1569,7 @@ async function renderCalendar() {
           } catch (error) {
             toast(`Lỗi tạo bài: ${error.message}`, true);
             button.disabled = false;
-            if (action) action.textContent = '＋ Tạo bài';
+            if (action) action.textContent = 'Tạo bài';
           }
         };
       });
@@ -1474,8 +1594,8 @@ async function renderLogs() {
         <div><h2>Nhật ký hệ thống</h2><p class="muted">Bao gồm hoạt động kiểm toán và log lỗi. Các lỗi mới nhất được tô đỏ và đưa lên đầu.</p></div>
         <div class="toolbar">
           <a class="button log-action" href="/api/audit-logs/export" download>Xuất CSV</a>
-          <button id="clearLogs" class="danger" ${pagination.total ? '' : 'disabled'}>Xóa log</button>
-          <button id="refreshLogs">Làm mới</button>
+          <button id="clearLogs" class="danger" ${pagination.total ? '' : 'disabled'}>${icon('trash-2')}Xóa log</button>
+          <button id="refreshLogs">${icon('refresh-cw')}Làm mới</button>
         </div>
       </div>
       ${logs.map(l => `
@@ -1515,7 +1635,6 @@ async function renderLogs() {
 
 async function renderSettings() {
   await fetchStatus();
-  if ($('#appVersion')) $('#appVersion').textContent = `v${serverStatus?.appVersion || '...'}`;
   const appConfig = await api('/api/app-config');
 
   const googleOk = serverStatus?.services?.googleDrive?.configured;
@@ -1527,7 +1646,7 @@ async function renderSettings() {
       <section class="panel">
         <div class="panelhead">
           <h2>Kết nối dịch vụ (Backend Server)</h2>
-          <button id="refreshStatus" style="padding:6px 12px;font-size:12px">🔄 Kiểm tra lại</button>
+          <button id="refreshStatus" style="padding:6px 12px;font-size:12px">${icon('refresh-cw')}Kiểm tra lại</button>
         </div>
 
         <div class="check ${googleOk ? 'pass' : ''}">
@@ -1539,9 +1658,9 @@ async function renderSettings() {
         </div>
         <div style="margin: 10px 0 20px 0">
           ${googleOk ? `
-            <button id="testProbeBtn" style="font-size:13px">🧪 Kiểm tra quyền ghi Drive (Probe Test)</button>
+            <button id="testProbeBtn" style="font-size:13px">${icon('flask-conical')}Kiểm tra quyền ghi Drive (Probe Test)</button>
           ` : `
-            <button id="connectGoogleBtn" class="primary" style="font-size:13px">🔗 Bấm để Kết nối Google Drive qua OAuth</button>
+            <button id="connectGoogleBtn" class="primary" style="font-size:13px">${icon('link')}Bấm để Kết nối Google Drive qua OAuth</button>
           `}
         </div>
 
@@ -1561,7 +1680,7 @@ async function renderSettings() {
           <b>${serverStatus?.services?.facebook?.hasPageToken ? 'Đã kết nối Page' : (metaOk ? 'Đã cấu hình App' : 'Chưa cấu hình')}</b>
         </div>
         <div style="margin: 10px 0 20px 0">
-          <button id="testMetaBtn" ${metaOk ? '' : 'disabled'} style="font-size:13px">🧪 Kiểm tra kết nối Meta App & Page</button>
+          <button id="testMetaBtn" ${metaOk ? '' : 'disabled'} style="font-size:13px">${icon('flask-conical')}Kiểm tra kết nối Meta App & Page</button>
         </div>
 
         <div class="check pass">
@@ -1588,14 +1707,18 @@ async function renderSettings() {
       <div class="panelhead">
         <div>
           <h2>Cấu hình ứng dụng</h2>
-          <p class="muted">Các giá trị được lưu cục bộ. Trường bí mật để trống sẽ giữ nguyên giá trị hiện tại.</p>
+          <p class="muted">Tất cả giá trị cấu hình được hiển thị và lưu cục bộ trên máy này.</p>
+        </div>
+        <div class="toolbar">
+          <button id="copyAppConfig" type="button">${icon('copy')}Copy cấu hình</button>
+          <button id="importAppConfig" type="button">${icon('file-up')}Import cấu hình</button>
         </div>
       </div>
       <form id="appConfigForm">
         <div id="appConfigFields"></div>
         <div style="display:flex;gap:10px;align-items:center;margin-top:18px">
-          <button class="primary" type="submit">💾 Lưu cấu hình</button>
-          <button id="restartApp" type="button">↻ Khởi động lại ứng dụng</button>
+          <button class="primary" type="submit">${icon('save')}Lưu cấu hình</button>
+          <button id="restartApp" type="button">${icon('rotate-ccw')}Khởi động lại ứng dụng</button>
           <small class="muted">Khởi động lại để nạp API key, model và các thiết lập vừa lưu.</small>
         </div>
       </form>
@@ -1604,10 +1727,7 @@ async function renderSettings() {
 
   const configGroups = [
     ['Vận hành', [
-      ['NODE_ENV', 'Môi trường', 'text'],
       ['APP_TIMEZONE', 'Múi giờ', 'text'],
-      ['PUBLISH_MODE', 'Chế độ xuất bản', 'text'],
-      ['DRIVE_OUTPUT_REQUIRED', 'Bắt buộc xuất Drive', 'boolean'],
       ['AUTOMATION_ENABLED', 'Bật tự động hóa', 'boolean'],
       ['AUTOMATION_INTERVAL_MINUTES', 'Chu kỳ tự động (phút)', 'number']
     ]],
@@ -1618,24 +1738,13 @@ async function renderSettings() {
     ]],
     ['Google', [
       ['GOOGLE_CLIENT_ID', 'Client ID', 'text'],
-      ['GOOGLE_CLIENT_SECRET', 'Client secret', 'password'],
-      ['GOOGLE_REDIRECT_URI', 'OAuth redirect URI', 'text']
+      ['GOOGLE_CLIENT_SECRET', 'Client secret', 'password']
     ]],
     ['Meta / Facebook', [
       ['META_APP_ID', 'App ID', 'text'],
       ['META_APP_SECRET', 'App secret', 'password'],
       ['META_GRAPH_VERSION', 'Graph API version', 'text'],
       ['FACEBOOK_PAGE_ACCESS_TOKEN', 'Page / System User Access Token', 'password']
-    ]],
-    ['Bảo mật và dịch vụ nâng cao', [
-      ['TOKEN_ENCRYPTION_KEY', 'Khóa mã hóa token', 'password'],
-      ['AUTH_SECRET', 'Khóa phiên đăng nhập', 'password'],
-      ['DATABASE_URL', 'Database URL (dự phòng)', 'text'],
-      ['REDIS_URL', 'Redis URL (dự phòng)', 'text'],
-      ['OBJECT_STORAGE_ENDPOINT', 'Object storage endpoint', 'text'],
-      ['OBJECT_STORAGE_BUCKET', 'Object storage bucket', 'text'],
-      ['OBJECT_STORAGE_ACCESS_KEY', 'Object storage access key', 'password'],
-      ['OBJECT_STORAGE_SECRET_KEY', 'Object storage secret key', 'password']
     ]]
   ];
 
@@ -1646,18 +1755,51 @@ async function renderSettings() {
         ${fields.map(([key, label, type]) => {
           const item = appConfig.settings[key] || {};
           if (type === 'boolean') return `
-            <label style="display:flex;align-items:center;gap:10px;margin-top:24px">
-              <input data-config-key="${key}" type="checkbox" ${item.value === 'true' ? 'checked' : ''} style="width:auto">
-              ${esc(label)}
-            </label>`;
-          const placeholder = item.secret && item.configured ? 'Đã cấu hình — để trống để giữ nguyên' : '';
+            <div class="config-switch">
+              <span>${esc(label)}</span>
+              <label class="switch" title="${esc(label)}">
+                <input data-config-key="${key}" type="checkbox" ${item.value === 'true' ? 'checked' : ''}>
+                <span class="switch-slider"></span>
+              </label>
+            </div>`;
           return `<label>${esc(label)}
-            <input data-config-key="${key}" type="${type}" value="${esc(item.value || '')}" placeholder="${esc(placeholder)}" autocomplete="off">
+            <input data-config-key="${key}" type="${type === 'password' ? 'text' : type}" value="${esc(item.value || '')}" autocomplete="off">
           </label>`;
         }).join('')}
       </div>
     </fieldset>
   `).join('');
+
+  $('#copyAppConfig').onclick = async () => {
+    try {
+      const settings = Object.fromEntries(Object.entries(appConfig.settings).map(([key, item]) => [key, item.value || '']));
+      await copyJson({ type: 'hbg-app-config', version: 1, settings }, 'Đã copy cấu hình ứng dụng.');
+    } catch (error) {
+      toast(`Không thể copy cấu hình: ${error.message}`, true);
+    }
+  };
+  $('#importAppConfig').onclick = () => {
+    modal('Import cấu hình ứng dụng', `
+      <label>Dán JSON cấu hình
+        <textarea name="configJson" rows="14" required placeholder='{"type":"hbg-app-config","settings":{...}}'></textarea>
+      </label>
+      <p class="warning">JSON có thể chứa API key và access token. Chỉ import cấu hình từ nguồn bạn tin cậy.</p>
+    `, async form => {
+      try {
+        const parsed = JSON.parse(form.get('configJson'));
+        const settings = parsed.settings || parsed;
+        const allowedKeys = new Set(Object.keys(appConfig.settings));
+        const cleanSettings = Object.fromEntries(Object.entries(settings).filter(([key, value]) => allowedKeys.has(key) && typeof value === 'string'));
+        if (!Object.keys(cleanSettings).length) throw new Error('Không có trường cấu hình hợp lệ.');
+        await api('/api/app-config', { method: 'PUT', body: JSON.stringify({ settings: cleanSettings }) });
+        toast('Đã import cấu hình. Hãy khởi động lại ứng dụng để áp dụng.');
+        renderSettings();
+      } catch (error) {
+        toast(`Import thất bại: ${error.message}`, true);
+        return false;
+      }
+    });
+  };
 
   $('#appConfigForm').onsubmit = async event => {
     event.preventDefault();
@@ -1694,7 +1836,7 @@ async function renderSettings() {
     } catch (error) {
       toast(`Không thể khởi động lại ứng dụng: ${error.message}`, true);
       button.disabled = false;
-      button.textContent = '↻ Khởi động lại ứng dụng';
+      button.innerHTML = `${icon('rotate-ccw')}Khởi động lại ứng dụng`;
     }
   };
 
@@ -1716,7 +1858,7 @@ async function renderSettings() {
   if (testProbeBtn) {
     testProbeBtn.onclick = async () => {
       testProbeBtn.disabled = true;
-      testProbeBtn.textContent = '⏳ Đang kiểm tra ghi probe...';
+      testProbeBtn.textContent = 'Đang kiểm tra ghi probe...';
       try {
         const res = await api('/api/connections/google/test', { method: 'POST' });
         toast(res.message || 'Kiểm tra thành công!');
@@ -1724,7 +1866,7 @@ async function renderSettings() {
         toast(`Lỗi probe: ${err.message}`, true);
       } finally {
         testProbeBtn.disabled = false;
-        testProbeBtn.textContent = '🧪 Kiểm tra quyền ghi Drive (Probe Test)';
+        testProbeBtn.innerHTML = `${icon('flask-conical')}Kiểm tra quyền ghi Drive (Probe Test)`;
       }
     };
   }
@@ -1733,7 +1875,7 @@ async function renderSettings() {
   if (testMetaBtn) {
     testMetaBtn.onclick = async () => {
       testMetaBtn.disabled = true;
-      testMetaBtn.textContent = '⏳ Đang xác thực với Meta...';
+      testMetaBtn.textContent = 'Đang xác thực với Meta...';
       try {
         const res = await api('/api/connections/meta/test', { method: 'POST' });
         toast(res.message || 'Kết nối Meta App thành công!');
@@ -1741,7 +1883,7 @@ async function renderSettings() {
         toast(err.message, true);
       } finally {
         testMetaBtn.disabled = !metaOk;
-        testMetaBtn.textContent = '🧪 Kiểm tra kết nối Meta App';
+        testMetaBtn.innerHTML = `${icon('flask-conical')}Kiểm tra kết nối Meta App`;
       }
     };
   }
@@ -1750,3 +1892,4 @@ async function renderSettings() {
 $('#closeModal').onclick = $('#cancelModal').onclick = () => $('#modal').close();
 window.addEventListener('hashchange', render);
 render();
+setInterval(pollGlobalNotifications, 5000);

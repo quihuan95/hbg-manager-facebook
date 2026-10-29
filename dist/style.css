@@ -8,6 +8,7 @@
   --blue: #285de5;
   --line: #e3e7ef;
   --muted: #68758b;
+  --footer-height: 42px;
 }
 * {
   box-sizing: border-box;
@@ -125,11 +126,27 @@ nav a.active {
 nav a:hover {
   background: #203151;
 }
-nav i {
-  font-style: normal;
+nav [data-lucide] {
   width: 19px;
-  text-align: center;
+  height: 19px;
+  flex: 0 0 19px;
   color: #859bc6;
+}
+
+[data-lucide] {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  vertical-align: -3px;
+}
+
+button [data-lucide],
+.button [data-lucide] {
+  margin-right: 5px;
+}
+
+.icon-button [data-lucide] {
+  margin-right: 0;
 }
 .nav-group {
   margin: 5px 0 10px;
@@ -172,19 +189,6 @@ nav i {
 .sidefoot small {
   color: #96a5c0;
 }
-.app-version {
-  margin-top: 14px;
-  color: #6f7f9b;
-  font-size: 10px;
-  letter-spacing: 0.4px;
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-.app-version span {
-  color: #aab6ca;
-  white-space: nowrap;
-}
 .avatar {
   border-radius: 50%;
   padding: 10px 14px;
@@ -192,7 +196,7 @@ nav i {
 }
 main {
   margin-left: 246px;
-  padding: 35px 40px;
+  padding: 35px 40px 72px;
   max-width: 1800px;
 }
 header {
@@ -315,6 +319,14 @@ p {
 .toolbar {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+}
+.profiles-panelhead {
+  display: block;
+}
+.profiles-toolbar {
+  width: 100%;
+  margin-top: 14px;
   flex-wrap: wrap;
 }
 input,
@@ -561,6 +573,12 @@ button.danger:hover {
   border-radius: 50%;
   vertical-align: -2px;
   animation: button-spin 0.7s linear infinite;
+}
+button.publish-loading {
+  justify-content: center;
+  align-items: center;
+  white-space: nowrap;
+  cursor: wait;
 }
 @keyframes button-spin {
   to { transform: rotate(360deg); }
@@ -862,9 +880,19 @@ footer {
   font-size: 10px;
   letter-spacing: 1px;
   color: #9aa4b5;
-  margin-top: 30px;
+  position: fixed;
+  z-index: 20;
+  left: 246px;
+  right: 0;
+  bottom: 0;
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  min-height: var(--footer-height);
+  padding: 10px 40px;
+  border-top: 1px solid var(--line);
+  background: rgba(244, 246, 250, 0.96);
+  backdrop-filter: blur(8px);
 }
 dialog {
   border: 0;
@@ -984,9 +1012,29 @@ dialog::backdrop {
   outline: 3px solid #a8c3fc;
   outline-offset: 2px;
 }
+.config-switch {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  min-height: 40px;
+  margin-top: 15px;
+  padding: 0 2px;
+  color: #53647e;
+  font-size: 14px;
+}
+.config-switch .switch {
+  display: block;
+  flex: none;
+  width: 44px;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+}
 #toast {
   position: fixed;
-  bottom: 25px;
+  z-index: 1000;
+  bottom: calc(var(--footer-height) + 16px);
   right: 25px;
   background: #142747;
   color: white;
@@ -1014,6 +1062,19 @@ dialog::backdrop {
 .topic-queue-table {
   table-layout: fixed;
   min-width: 960px;
+}
+.topic-queue-table .topic {
+  max-width: 620px;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.topic-queue-table td:nth-child(2) > small {
+  display: block;
+  max-width: 620px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .topic-queue-table th:first-child,
 .topic-queue-table td:first-child {
@@ -1091,7 +1152,7 @@ dialog::backdrop {
 }
 .post-queue-table th:nth-child(6),
 .post-queue-table td:nth-child(6) {
-  width: 150px;
+  width: 260px;
 }
 .cardfoot > div {
   display: grid;
@@ -1201,20 +1262,30 @@ dialog::backdrop {
 .rule-preview {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 10;
   overflow: hidden;
   white-space: pre-wrap;
   font-size: 14px;
   line-height: 1.6;
   color: #33445f;
 }
+.ruletext-inline {
+  margin: 0;
+  border: 1px solid #e4e9f1;
+  background: #f7f9fc;
+}
 .rule-toggle {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   align-items: center;
-  gap: 5px;
-  margin-top: 8px;
-  color: #52719d;
+  gap: 6px;
+  width: max-content;
+  margin: 10px 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid #bdd0f5;
+  border-radius: 7px;
+  background: #edf3ff;
+  color: #285db8;
   font-size: 12px;
   font-weight: 600;
 }
@@ -1227,7 +1298,8 @@ dialog::backdrop {
   display: inline;
 }
 .rule-details[open] .rule-toggle {
-  padding: 0 16px 10px;
+  margin-right: 16px;
+  margin-bottom: 10px;
 }
 .rule-details[open] .ruletext {
   margin: 0 12px 12px;
@@ -1252,7 +1324,12 @@ dialog::backdrop {
   }
   main {
     margin-left: 200px;
-    padding: 25px;
+    padding: 25px 25px 72px;
+  }
+  footer {
+    left: 200px;
+    padding-right: 25px;
+    padding-left: 25px;
   }
   .layout {
     grid-template-columns: 1fr;
@@ -1302,7 +1379,12 @@ dialog::backdrop {
   }
   main {
     margin: 0;
-    padding: 18px;
+    padding: 18px 18px 68px;
+  }
+  footer {
+    left: 0;
+    padding-right: 18px;
+    padding-left: 18px;
   }
   header {
     align-items: flex-start;

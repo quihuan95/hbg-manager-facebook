@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { readMediaBuffer } from './media.js';
 import { db } from './db.js';
 import { getPostById } from './models/post.js';
 import { markManuallyUploaded } from './manual_upload.js';
@@ -166,12 +167,8 @@ export async function publishPostToFacebook(postId, options = {}) {
     const mime = rev.image_mime || 'image/png';
     const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png';
 
-    if (rev.image_data.startsWith('data:')) {
-      const base64Data = rev.image_data.split(',')[1];
-      imgBuffer = Buffer.from(base64Data, 'base64');
-    } else {
-      imgBuffer = Buffer.from(rev.image_data, 'base64');
-    }
+    imgBuffer = readMediaBuffer(rev.image_data);
+    if (!imgBuffer) throw new Error('Không đọc được file ảnh trong thư mục dữ liệu ứng dụng.');
 
     // Bước 1: Tải ảnh lên Facebook dưới dạng tài sản đính kèm (published=false)
     const formData = new FormData();

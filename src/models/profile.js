@@ -1,4 +1,5 @@
 import { db } from '../db.js';
+import { mediaMime, storeMediaValue } from '../media.js';
 
 export function getAllProfiles() {
   return db.prepare('SELECT * FROM profiles ORDER BY name ASC').all();
@@ -35,10 +36,14 @@ function normalizeWorkflowMode(value) {
 function normalizeLogo(value) {
   if (!value) return null;
   const logo = String(value);
+  if (logo.startsWith('/media/logos/')) return { data: logo, mime: mediaMime(logo) };
   const match = logo.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/i);
   if (!match) throw new Error('Logo phải là file PNG, JPEG hoặc WebP.');
   if (Buffer.byteLength(match[2], 'base64') > 3 * 1024 * 1024) throw new Error('Logo không được vượt quá 3 MB.');
-  return { data: logo, mime: `image/${match[1].toLowerCase() === 'jpg' ? 'jpeg' : match[1].toLowerCase()}` };
+  return {
+    data: storeMediaValue(logo, 'logos'),
+    mime: `image/${match[1].toLowerCase() === 'jpg' ? 'jpeg' : match[1].toLowerCase()}`
+  };
 }
 
 export function updateProfile(id, data) {

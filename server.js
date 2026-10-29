@@ -17,10 +17,11 @@ import { generateImage } from './src/ai/image.js';
 import { approvePost, requestChanges } from './src/review/approval.js';
 import { exportPostToDrive } from './src/google/export.js';
 import { markManuallyUploaded, markManyManuallyUploaded } from './src/manual_upload.js';
-import { runContentAutomation } from './src/automation.js';
+import { runContentAutomation, syncRulesFromDrive } from './src/automation.js';
 import { testMetaConnection, publishPostToFacebook } from './src/meta.js';
 import { getAppSettings, saveAppSettings } from './src/settings.js';
 import { applyProfileLogo } from './src/image/logo.js';
+import { migrateBase64Media, resolveMediaPath } from './src/media.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +30,10 @@ const APP_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.jso
 
 // Initialize database schema and seeds
 initDb();
+const mediaMigration = migrateBase64Media(db);
+if (mediaMigration.revisions || mediaMigration.profiles) {
+  console.log(`[Media] Đã chuyển ${mediaMigration.revisions} ảnh bài viết và ${mediaMigration.profiles} logo ra thư mục AppData.`);
+}
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -106,6 +111,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if ((req.method === 'GET' || req.method === 'HEAD') && pathname.startsWith('/media/')) {
+    const mediaPath = resolveMediaPath(pathname);
+    if (!mediaPath || !fs.existsSync(mediaPath)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Media not found');
+      return;
+    }
+    const stat = fs.statSync(mediaPath);
+    res.writeHead(200, {
+      'Content-Type': MIME_TYPES[path.extname(mediaPath).toLowerCase()] || 'application/octet-stream',
+      'Content-Length': stat.size,
+      'Cache-Control': 'public, max-age=31536000, immutable'
+    });
+    if (req.method === 'HEAD') res.end();
+    else fs.createReadStream(mediaPath).pipe(res);
+    return;
+  }
+
   // API Routes
   if (pathname.startsWith('/api/')) {
     try {
@@ -163,6 +186,21 @@ const server = http.createServer(async (req, res) => {
             }
           }
         });
+      }
+
+      if (pathname === '/api/notifications' && req.method === 'GET') {
+        const after = parsedUrl.searchParams.get('after') || new Date().toISOString();
+        const notifications = db.prepare(`
+          SELECT ae.id, ae.action, ae.entity_id, ae.details_json, ae.created_at,
+                 COALESCE(r.topic_title, p.id) AS topic_title
+          FROM audit_events ae
+          LEFT JOIN posts p ON p.id = ae.entity_id
+          LEFT JOIN post_revisions r ON r.id = p.current_revision_id
+          WHERE ae.created_at > ?
+            AND ae.action IN ('CONTENT_AUTOMATION_COMPLETED', 'FACEBOOK_AUTO_PUBLISHED')
+          ORDER BY ae.created_at ASC
+        `).all(after);
+        return sendJson(res, 200, notifications);
       }
 
       // Local desktop configuration. Secret values are never returned to the renderer.
@@ -276,10 +314,13 @@ const server = http.createServer(async (req, res) => {
       if (pathname.match(/^\/api\/profiles\/([^/]+)\/sync-sheet$/) && req.method === 'POST') {
         const profileId = pathname.split('/')[3];
         const body = await parseBody(req);
-        const sheetId = body.sheetId || (getProfileById(profileId)?.sheet_id_topics);
+        const profile = getProfileById(profileId);
+        if (!profile) return sendJson(res, 404, { error: 'Content Profile không tồn tại.' });
+        const sheetId = body.sheetId || profile.sheet_id_topics;
         if (!sheetId) return sendJson(res, 400, { error: 'Chưa cấu hình Sheet ID cho Profile này.' });
-        const result = await syncTopicsFromSheet(profileId, sheetId);
-        return sendJson(res, 200, result);
+        const rule = await syncRulesFromDrive(profile);
+        const topics = await syncTopicsFromSheet(profileId, sheetId);
+        return sendJson(res, 200, { ...topics, rule });
       }
 
       if (pathname === '/api/profiles/sync-all' && req.method === 'POST') {
@@ -287,8 +328,9 @@ const server = http.createServer(async (req, res) => {
         const results = [];
         for (const profile of profiles) {
           try {
+            const rule = await syncRulesFromDrive(profile);
             const sync = await syncTopicsFromSheet(profile.id, profile.sheet_id_topics);
-            results.push({ profileId: profile.id, profileName: profile.name, success: true, ...sync });
+            results.push({ profileId: profile.id, profileName: profile.name, success: true, rule, ...sync });
           } catch (error) {
             results.push({ profileId: profile.id, profileName: profile.name, success: false, error: error.message });
           }
@@ -297,6 +339,7 @@ const server = http.createServer(async (req, res) => {
           profiles: profiles.length,
           succeeded: results.filter(item => item.success).length,
           failed: results.filter(item => !item.success).length,
+          rulesUpdated: results.filter(item => item.success && item.rule?.changed).length,
           imported: results.reduce((sum, item) => sum + (item.imported || 0), 0),
           updated: results.reduce((sum, item) => sum + (item.updated || 0), 0),
           removed: results.reduce((sum, item) => sum + (item.removed || 0), 0),

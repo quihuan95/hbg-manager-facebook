@@ -13,10 +13,7 @@ const SECRET_KEYS = new Set([
 ]);
 
 export const SETTING_KEYS = [
-  'NODE_ENV',
   'APP_TIMEZONE',
-  'PUBLISH_MODE',
-  'DRIVE_OUTPUT_REQUIRED',
   'AUTOMATION_ENABLED',
   'AUTOMATION_INTERVAL_MINUTES',
   'OPENAI_API_KEY',
@@ -24,19 +21,10 @@ export const SETTING_KEYS = [
   'OPENAI_IMAGE_MODEL',
   'GOOGLE_CLIENT_ID',
   'GOOGLE_CLIENT_SECRET',
-  'GOOGLE_REDIRECT_URI',
   'META_APP_ID',
   'META_APP_SECRET',
   'META_GRAPH_VERSION',
-  'FACEBOOK_PAGE_ACCESS_TOKEN',
-  'TOKEN_ENCRYPTION_KEY',
-  'AUTH_SECRET',
-  'DATABASE_URL',
-  'REDIS_URL',
-  'OBJECT_STORAGE_ENDPOINT',
-  'OBJECT_STORAGE_BUCKET',
-  'OBJECT_STORAGE_ACCESS_KEY',
-  'OBJECT_STORAGE_SECRET_KEY'
+  'FACEBOOK_PAGE_ACCESS_TOKEN'
 ];
 
 function envPath() {
@@ -72,7 +60,7 @@ export function getAppSettings() {
     return [key, {
       secret: SECRET_KEYS.has(key),
       configured: Boolean(value && !/^(REPLACE_|CONFIGURE_)/.test(value)),
-      value: SECRET_KEYS.has(key) ? '' : value
+      value
     }];
   }));
 }
@@ -87,7 +75,6 @@ export function saveAppSettings(input = {}) {
     if (typeof raw !== 'string') throw new Error(`${key} phải là chuỗi.`);
     const value = raw.trim();
     if (/\r|\n/.test(value)) throw new Error(`${key} không được chứa ký tự xuống dòng.`);
-    if (SECRET_KEYS.has(key) && !value) continue;
     values.set(key, value);
   }
 

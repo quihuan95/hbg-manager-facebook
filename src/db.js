@@ -141,7 +141,7 @@ export function initDb() {
       headline TEXT,
       cta TEXT,
       image_brief TEXT,
-      image_data TEXT, -- Base64 Data URL or local staging ref
+      image_data TEXT, -- Internal /media URL; binary content is stored under AppData.
       image_mime TEXT,
       image_dimensions TEXT,
       rule_version_id TEXT,

@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { sha256 } from '../crypto.js';
 import { getLatestPublishedRule } from './rule.js';
 import { getProfileById } from './profile.js';
+import { storeMediaValue } from '../media.js';
 
 export function getAllPosts(filterStatus = null, filterProfile = null) {
   let query = `
@@ -119,7 +120,8 @@ export function createNewRevision(postId, updates, expectedRevisionId = null) {
   const headline = updates.headline !== undefined ? updates.headline : (currentRev?.headline || '');
   const cta = updates.cta !== undefined ? updates.cta : (currentRev?.cta || '');
   const imageBrief = updates.imageBrief !== undefined ? updates.imageBrief : (currentRev?.image_brief || '');
-  const imageData = updates.imageData !== undefined ? updates.imageData : (currentRev?.image_data || null);
+  const rawImageData = updates.imageData !== undefined ? updates.imageData : (currentRev?.image_data || null);
+  const imageData = storeMediaValue(rawImageData, 'images');
   const imageMime = updates.imageMime !== undefined ? updates.imageMime : (currentRev?.image_mime || null);
 
   // Re-evaluate validation findings

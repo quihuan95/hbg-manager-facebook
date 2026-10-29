@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { getPostById, updatePostStatus } from '../models/post.js';
 import { resolveFolder, createFolder, uploadFileToDrive } from './drive.js';
 import { sha256 } from '../crypto.js';
+import { readMediaBuffer } from '../media.js';
 
 function driveSafeSlug(value, maxLength = 64) {
   const slug = String(value || 'bai-viet')
@@ -59,12 +60,8 @@ export async function exportPostToDrive(postId) {
     let mime = rev.image_mime || 'image/png';
     let ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png';
 
-    if (rev.image_data.startsWith('data:')) {
-      const base64Data = rev.image_data.split(',')[1];
-      imgBuffer = Buffer.from(base64Data, 'base64');
-    } else {
-      imgBuffer = Buffer.from(rev.image_data, 'utf8');
-    }
+    imgBuffer = readMediaBuffer(rev.image_data);
+    if (!imgBuffer) throw new Error('Không đọc được file ảnh trong thư mục dữ liệu ứng dụng.');
 
     imageUpload = await uploadFileToDrive(revFolder.id, `image.${ext}`, mime, imgBuffer);
   }
