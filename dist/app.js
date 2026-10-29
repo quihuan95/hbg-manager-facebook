@@ -1697,8 +1697,19 @@ async function renderSettings() {
         <div class="details">
           <span>Môi trường</span><b>${esc(serverStatus?.env || 'development')}</b>
           <span>Múi giờ</span><b>${esc(serverStatus?.timezone || 'Asia/Ho_Chi_Minh')}</b>
+          <span>Backend đang chạy</span><b>${esc(serverStatus?.runtime?.baseUrl || 'http://127.0.0.1:8080')}</b>
+          <span>Port hiện tại</span><b>${esc(serverStatus?.runtime?.port || '8080')}</b>
           <span>Chế độ vận hành</span><b>Theo từng Content Profile</b>
           <span>Cơ sở dữ liệu</span><b>SQLite bền vững (data/content_studio.sqlite)</b>
+        </div>
+        <div style="margin-top:18px">
+          <label>Google OAuth Redirect URI đang sử dụng
+            <div class="input-with-action oauth-uri-row">
+              <input id="runtimeRedirectUri" value="${esc(serverStatus?.runtime?.googleRedirectUri || '')}" readonly>
+              <button id="copyRedirectUri" type="button">${icon('copy')}Copy URI</button>
+            </div>
+          </label>
+          <p class="muted" style="margin-bottom:0">Thêm chính xác URI này vào Authorized redirect URIs trong Google Cloud.</p>
         </div>
       </section>
     </div>
@@ -1724,6 +1735,15 @@ async function renderSettings() {
       </form>
     </section>
   `;
+
+  $('#copyRedirectUri').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($('#runtimeRedirectUri').value);
+      toast('Đã copy Google OAuth Redirect URI.');
+    } catch (error) {
+      toast(`Không thể copy Redirect URI: ${error.message}`, true);
+    }
+  };
 
   const configGroups = [
     ['Vận hành', [

@@ -1234,6 +1234,23 @@ dialog::backdrop {
   height: 40px;
   box-sizing: border-box;
 }
+.input-with-action button {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 12px;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.oauth-uri-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.oauth-uri-row button {
+  align-self: flex-start;
+}
 .back {
   margin-bottom: 20px;
 }

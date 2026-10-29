@@ -149,6 +149,12 @@ const server = http.createServer(async (req, res) => {
           env: config.env,
           timezone: config.timezone,
           publishMode: config.publishMode,
+          runtime: {
+            host: '127.0.0.1',
+            port: server.address()?.port || config.port,
+            baseUrl: `http://127.0.0.1:${server.address()?.port || config.port}`,
+            googleRedirectUri: config.google.redirectUri
+          },
           services: {
             openai: {
               configured: isOpenAiConfigured,
