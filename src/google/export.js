@@ -5,24 +5,20 @@ import { resolveFolder, createFolder, uploadFileToDrive } from './drive.js';
 import { sha256 } from '../crypto.js';
 import { readMediaBuffer } from '../media.js';
 
-function driveSafeSlug(value, maxLength = 64) {
-  const slug = String(value || 'bai-viet')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+function driveFolderName(value, maxLength = 120) {
+  const name = String(value || 'Bài viết')
+    .replace(/[\\/]+/g, ' - ')
+    .replace(/[\u0000-\u001f\u007f]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
     .slice(0, maxLength)
-    .replace(/-+$/g, '');
-  return slug || 'bai-viet';
+    .trim();
+  return name || 'Bài viết';
 }
 
-function meaningfulPostFolderName(post) {
-  const time = String(post.scheduled_time || '09:00').replace(':', '-');
-  const shortId = String(post.id || 'post').replace(/[^a-zA-Z0-9]/g, '').slice(-8).toLowerCase();
-  return `${time}_${driveSafeSlug(post.topic_title)}_${shortId}`;
+function driveDateFolderName(contentDate) {
+  const match = String(contentDate || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : driveFolderName(contentDate || 'Chưa xác định ngày');
 }
 
 export async function exportPostToDrive(postId) {
@@ -43,9 +39,9 @@ export async function exportPostToDrive(postId) {
   }
 
   const rootFolder = await resolveFolder(outputRootFolderId);
-  const dateFolder = await createFolder(rootFolder.id, post.content_date);
-  const postFolder = await createFolder(dateFolder.id, meaningfulPostFolderName(post));
-  const revFolder = await createFolder(postFolder.id, `v${String(rev.revision_number).padStart(3, '0')}`);
+  const dateFolder = await createFolder(rootFolder.id, driveDateFolderName(post.content_date));
+  const postFolder = await createFolder(dateFolder.id, driveFolderName(post.topic_title));
+  const revFolder = await createFolder(postFolder.id, `v${rev.revision_number}`);
 
   const now = new Date().toISOString();
 
