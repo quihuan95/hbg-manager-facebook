@@ -2,6 +2,28 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+function initializeWindowControls() {
+  const controls = window.hbgWindowControls;
+  if (!controls) return;
+  document.body.classList.add('electron-shell');
+  const maximizeButton = $('#windowMaximize');
+  const setMaximized = maximized => {
+    document.body.classList.toggle('window-maximized', maximized);
+    maximizeButton?.setAttribute('aria-label', maximized ? 'Khôi phục' : 'Phóng to');
+    maximizeButton?.setAttribute('title', maximized ? 'Khôi phục' : 'Phóng to');
+  };
+  $('#windowMinimize').onclick = controls.minimize;
+  maximizeButton.onclick = controls.toggleMaximize;
+  $('#windowClose').onclick = controls.close;
+  $('#appTitlebar').ondblclick = event => {
+    if (!event.target.closest('.window-controls')) controls.toggleMaximize();
+  };
+  controls.isMaximized().then(setMaximized);
+  controls.onMaximizedChange(setMaximized);
+}
+
+initializeWindowControls();
+
 function googleSheetUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';

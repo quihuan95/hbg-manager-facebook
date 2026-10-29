@@ -16,6 +16,147 @@
 body {
   margin: 0;
 }
+
+.app-titlebar {
+  display: none;
+}
+
+.electron-shell .app-titlebar {
+  position: fixed;
+  z-index: 10000;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  height: 38px;
+  align-items: stretch;
+  justify-content: space-between;
+  color: #dce4fa;
+  background:
+    linear-gradient(90deg, rgba(102, 91, 237, 0.18), transparent 24%),
+    linear-gradient(90deg, #121b3b, #18264f 58%, #111a38);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 3px 14px rgba(5, 10, 30, 0.18);
+  user-select: none;
+}
+
+.titlebar-drag-region {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 0 13px;
+  -webkit-app-region: drag;
+  font-size: 12px;
+}
+
+.titlebar-drag-region strong {
+  color: white;
+  font-size: 11px;
+  letter-spacing: 0.7px;
+}
+
+.titlebar-drag-region > i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #d7ac4d;
+}
+
+.titlebar-drag-region > span:last-child {
+  overflow: hidden;
+  color: #aebbd7;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titlebar-mark {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  color: #f0c45e;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.window-controls {
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+
+.window-controls button {
+  position: relative;
+  display: grid;
+  width: 46px;
+  min-height: 0;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  color: #dbe3f7;
+  background: transparent;
+  box-shadow: none;
+}
+
+.window-controls button:hover {
+  border: 0;
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: none;
+  transform: none;
+}
+
+#windowClose:hover {
+  background: #d74747;
+}
+
+#windowMinimize span {
+  width: 11px;
+  height: 1px;
+  background: currentColor;
+}
+
+#windowMaximize span {
+  width: 10px;
+  height: 9px;
+  border: 1px solid currentColor;
+}
+
+.window-maximized #windowMaximize span::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 7px;
+  margin: -3px 0 0 -5px;
+  border: 1px solid currentColor;
+  background: #18264f;
+}
+
+#windowClose span::before,
+#windowClose span::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 1px;
+  background: currentColor;
+}
+
+#windowClose span::before { transform: rotate(45deg); }
+#windowClose span::after { transform: rotate(-45deg); }
+
+.electron-shell aside {
+  top: 38px;
+  height: calc(100vh - 38px);
+}
+
+.electron-shell main {
+  height: calc(100vh - 38px);
+  margin-top: 38px;
+}
 button,
 input,
 textarea,
@@ -1729,6 +1870,9 @@ nav a.active [data-lucide] {
 main {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  width: calc(100vw - 246px);
+  min-width: 0;
+  max-width: none;
   padding-top: 30px;
   padding-bottom: 0;
   height: 100vh;
@@ -1737,14 +1881,27 @@ main {
 
 #viewScroll {
   width: 100%;
+  max-width: 100%;
   height: 100%;
   min-height: 0;
   overflow: visible;
 }
 
+#view,
+#viewScroll .simplebar-content-wrapper {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .tablewrap[data-simplebar],
 #calendarDayBody[data-simplebar] {
   overflow: visible;
+}
+
+.tablewrap {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 #viewScroll > .simplebar-wrapper > .simplebar-mask > .simplebar-offset > .simplebar-content-wrapper > .simplebar-content {
@@ -1868,10 +2025,21 @@ h3 {
 .panel,
 .card,
 .stat {
+  min-width: 0;
+  max-width: 100%;
   border-color: rgba(218, 222, 236, 0.88);
   background: var(--surface);
   box-shadow: none;
   backdrop-filter: blur(10px);
+}
+
+.layout,
+.stats,
+.cards,
+.panelhead,
+.panelhead > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .panel {
@@ -2119,6 +2287,7 @@ footer {
 
 @media (max-width: 1000px) {
   body::before { left: 200px; }
+  main { width: calc(100vw - 200px); }
   header {
     margin-right: -25px;
     margin-left: -25px;

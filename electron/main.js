@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell } from 'electron/main';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron/main';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,14 +58,24 @@ async function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     show: false,
+    frame: false,
     autoHideMenuBar: true,
     backgroundColor: '#f4f7fb',
     webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
     }
   });
+
+  const sendMaximizedState = () => {
+    if (!mainWindow?.isDestroyed()) {
+      mainWindow.webContents.send('window:maximized', mainWindow.isMaximized());
+    }
+  };
+  mainWindow.on('maximize', sendMaximizedState);
+  mainWindow.on('unmaximize', sendMaximizedState);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://') || url.startsWith('http://')) shell.openExternal(url);
@@ -75,6 +85,21 @@ async function createWindow() {
   await mainWindow.loadURL(appUrl);
   mainWindow.show();
 }
+
+ipcMain.on('window:minimize', event => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
+});
+ipcMain.on('window:toggle-maximize', event => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return;
+  window.isMaximized() ? window.unmaximize() : window.maximize();
+});
+ipcMain.on('window:close', event => {
+  BrowserWindow.fromWebContents(event.sender)?.close();
+});
+ipcMain.handle('window:is-maximized', event => {
+  return BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false;
+});
 
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) {
