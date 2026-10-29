@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { config } from './src/config.js';
@@ -8,8 +9,8 @@ import { initDb, db } from './src/db.js';
 import { getGoogleAuthUrl, handleGoogleCallback, getConnectionStatus } from './src/google/oauth.js';
 import { probeDriveWrite, resolveFolder } from './src/google/drive.js';
 import { syncTopicsFromSheet } from './src/google/sheets.js';
-import { getAllProfiles, getProfileById, updateProfile, createProfile } from './src/models/profile.js';
-import { getAllRuleVersions, createRuleVersion, getLatestPublishedRule } from './src/models/rule.js';
+import { getAllProfiles, getProfileById, updateProfile, createProfile, deleteProfile } from './src/models/profile.js';
+import { getAllRuleVersions, createRuleVersion, getLatestPublishedRule, deleteRuleVersions } from './src/models/rule.js';
 import { getAllPosts, getPostById, createPostFromTopic, createNewRevision, updatePostStatus, deletePost } from './src/models/post.js';
 import { generateCaption } from './src/ai/caption.js';
 import { generateImage } from './src/ai/image.js';
@@ -19,6 +20,7 @@ import { markManuallyUploaded, markManyManuallyUploaded } from './src/manual_upl
 import { runContentAutomation } from './src/automation.js';
 import { testMetaConnection, publishPostToFacebook } from './src/meta.js';
 import { getAppSettings, saveAppSettings } from './src/settings.js';
+import { applyProfileLogo } from './src/image/logo.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,6 +53,19 @@ function sendJson(res, statusCode, data) {
   res.end(JSON.stringify(data));
 }
 
+function logPostError(action, post, error) {
+  db.prepare(`
+    INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, details_json, created_at)
+    VALUES (?, 'u_admin', ?, 'post', ?, ?, ?)
+  `).run(
+    `audit_${crypto.randomUUID().slice(0, 12)}`,
+    action,
+    post.id,
+    JSON.stringify({ profileId: post.profile_id, title: post.topic_title, error: error.message }),
+    new Date().toISOString()
+  );
+}
+
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -70,6 +85,11 @@ function parseBody(req) {
     });
     req.on('error', reject);
   });
+}
+
+function csvCell(value) {
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -153,6 +173,12 @@ const server = http.createServer(async (req, res) => {
         const body = await parseBody(req);
         return sendJson(res, 200, saveAppSettings(body.settings || {}));
       }
+      if (pathname === '/api/app/restart' && req.method === 'POST') {
+        const restartSupported = process.listenerCount('hbg-app-restart') > 0;
+        sendJson(res, 200, { success: true, restartSupported });
+        if (restartSupported) setTimeout(() => process.emit('hbg-app-restart'), 500).unref();
+        return;
+      }
 
       // 3. Google OAuth start
       if (pathname === '/api/oauth/google/start' && req.method === 'GET') {
@@ -225,6 +251,10 @@ const server = http.createServer(async (req, res) => {
         const p = updateProfile(profileId, body);
         return sendJson(res, 200, p);
       }
+      if (pathname.match(/^\/api\/profiles\/([^/]+)$/) && req.method === 'DELETE') {
+        const profileId = decodeURIComponent(pathname.split('/')[3]);
+        return sendJson(res, 200, deleteProfile(profileId));
+      }
 
       // 7. Rules for profile
       if (pathname.match(/^\/api\/profiles\/([^/]+)\/rules$/) && req.method === 'GET') {
@@ -236,6 +266,10 @@ const server = http.createServer(async (req, res) => {
         const body = await parseBody(req);
         const rv = createRuleVersion(profileId, body.contentMarkdown || body.rule);
         return sendJson(res, 201, rv);
+      }
+      if (pathname.match(/^\/api\/profiles\/([^/]+)\/rules$/) && req.method === 'DELETE') {
+        const profileId = decodeURIComponent(pathname.split('/')[3]);
+        return sendJson(res, 200, deleteRuleVersions(profileId));
       }
 
       // 8. Sync Topics from Sheet
@@ -264,7 +298,10 @@ const server = http.createServer(async (req, res) => {
           succeeded: results.filter(item => item.success).length,
           failed: results.filter(item => !item.success).length,
           imported: results.reduce((sum, item) => sum + (item.imported || 0), 0),
-          updated: results.reduce((sum, item) => sum + (item.updated || 0), 0)
+          updated: results.reduce((sum, item) => sum + (item.updated || 0), 0),
+          removed: results.reduce((sum, item) => sum + (item.removed || 0), 0),
+          removedPosts: results.reduce((sum, item) => sum + (item.removedPosts || 0), 0),
+          archivedPosts: results.reduce((sum, item) => sum + (item.archivedPosts || 0), 0)
         };
         return sendJson(res, summary.failed ? 207 : 200, { success: summary.failed === 0, summary, results });
       }
@@ -286,7 +323,7 @@ const server = http.createServer(async (req, res) => {
           WHERE 1=1
         `;
         const params = [];
-        if (!includeAll) query += " AND t.status = 'READY'";
+        // Every row synced from the Sheet is a confirmed topic.
         if (profileId) {
           query += ' AND t.profile_id = ?';
           params.push(profileId);
@@ -395,6 +432,7 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 200, { success: true, post: updatedPost, model: aiResult.model });
         } catch (err) {
           updatePostStatus(postId, 'DRAFT');
+          logPostError('CAPTION_GENERATION_FAILED', post, err);
           throw err;
         }
       }
@@ -410,14 +448,25 @@ const server = http.createServer(async (req, res) => {
 
         updatePostStatus(postId, 'GENERATING');
         try {
-          const aiResult = await generateImage(post.topic_title, post.profile_name, rule?.content_markdown || '', body.imageBrief || post.image_brief || '');
+          const userPrompt = String(body.imageBrief || '').trim();
+          const effectiveImageBrief = userPrompt
+            ? [
+                `Ưu tiên 1 — Prompt nhập tay: ${userPrompt}`,
+                post.sheet_image_rule && `Ưu tiên 2 — Rule ảnh từ Sheet: ${post.sheet_image_rule}`
+              ].filter(Boolean).join('\n\n')
+            : (post.image_brief || post.sheet_image_rule || '');
+          const aiResult = await generateImage(post.topic_title, post.profile_name, rule?.content_markdown || '', effectiveImageBrief);
+          aiResult.imageData = await applyProfileLogo(aiResult.imageData, post.logo_data);
+          aiResult.imageMime = 'image/png';
           const updatedPost = createNewRevision(postId, {
+            imageBrief: effectiveImageBrief,
             imageData: aiResult.imageData,
             imageMime: aiResult.imageMime
           });
           return sendJson(res, 200, { success: true, post: updatedPost, model: aiResult.model });
         } catch (err) {
           updatePostStatus(postId, 'DRAFT');
+          logPostError('IMAGE_GENERATION_FAILED', post, err);
           throw err;
         }
       }
@@ -442,7 +491,13 @@ const server = http.createServer(async (req, res) => {
         const postId = pathname.split('/')[3];
         const body = await parseBody(req);
         const approved = approvePost(postId, body.approverId || 'u_admin', body.checklist || {});
-        return sendJson(res, 200, approved);
+        try {
+          const exported = await exportPostToDrive(postId);
+          return sendJson(res, 200, { success: true, post: getPostById(postId), export: exported });
+        } catch (error) {
+          logPostError('DRIVE_EXPORT_FAILED', approved, error);
+          throw new Error(`Bài đã được duyệt nhưng chưa thể xuất lên Drive: ${error.message}`);
+        }
       }
 
       // 15. Request Changes
@@ -488,9 +543,37 @@ const server = http.createServer(async (req, res) => {
       }
 
       // 18. Audit Logs
+      if (pathname === '/api/audit-logs/export' && req.method === 'GET') {
+        const logs = db.prepare('SELECT * FROM audit_events ORDER BY created_at DESC').all();
+        const headers = ['created_at', 'action', 'actor_id', 'entity_type', 'entity_id', 'revision_id', 'details_json'];
+        const csv = [headers.map(csvCell).join(','), ...logs.map(log => headers.map(key => csvCell(log[key])).join(','))].join('\r\n');
+        res.writeHead(200, {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="hbg-system-logs-${new Date().toISOString().slice(0, 10)}.csv"`,
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(`\uFEFF${csv}`);
+        return;
+      }
       if (pathname === '/api/audit-logs' && req.method === 'GET') {
-        const logs = db.prepare('SELECT * FROM audit_events ORDER BY created_at DESC LIMIT 100').all();
-        return sendJson(res, 200, logs);
+        const requestedPage = Number.parseInt(parsedUrl.searchParams.get('page') || '1', 10);
+        const requestedPageSize = Number.parseInt(parsedUrl.searchParams.get('pageSize') || '20', 10);
+        const page = Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1;
+        const pageSize = Number.isFinite(requestedPageSize) ? Math.min(100, Math.max(10, requestedPageSize)) : 20;
+        const total = db.prepare('SELECT COUNT(*) AS count FROM audit_events').get().count;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        const currentPage = Math.min(page, totalPages);
+        const logs = db.prepare(`
+          SELECT * FROM audit_events
+          ORDER BY CASE WHEN action LIKE '%FAILED%' OR action LIKE '%ERROR%' THEN 0 ELSE 1 END,
+                   created_at DESC
+          LIMIT ? OFFSET ?
+        `).all(pageSize, (currentPage - 1) * pageSize);
+        return sendJson(res, 200, { items: logs, pagination: { page: currentPage, pageSize, total, totalPages } });
+      }
+      if (pathname === '/api/audit-logs' && req.method === 'DELETE') {
+        const deleted = db.prepare('DELETE FROM audit_events').run().changes;
+        return sendJson(res, 200, { success: true, deleted });
       }
 
       return sendJson(res, 404, { success: false, error: 'API Endpoint không tồn tại.' });
@@ -541,9 +624,9 @@ server.listen(config.port, '127.0.0.1', () => {
 
   if (config.automation.enabled) {
     const runScheduledAutomation = () => {
-      runContentAutomation().then(result => {
+      runContentAutomation({ scheduled: true }).then(result => {
         const s = result.summary;
-        console.log(`[Automation] Exported=${s.exported}, skipped=${s.skipped}, failed=${s.failed}, profileErrors=${s.profileErrors}`);
+        console.log(`[Automation] Exported=${s.exported}, published=${s.published}, publishFailed=${s.publishFailed}, skipped=${s.skipped}, failed=${s.failed}, profileErrors=${s.profileErrors}`);
       }).catch(error => {
         console.error('[Automation] Run failed:', error.message);
       });

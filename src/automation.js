@@ -7,17 +7,22 @@ import { generateImage } from './ai/image.js';
 import { createPostFromTopic, createNewRevision, getPostById, updatePostStatus } from './models/post.js';
 import { createRuleVersion, getLatestPublishedRule } from './models/rule.js';
 import { approvePost } from './review/approval.js';
+import { publishPostToFacebook } from './meta.js';
+import crypto from 'node:crypto';
+import { applyProfileLogo } from './image/logo.js';
 
-function topicContext(topic) {
-  return [
-    topic.content_type && `Loại nội dung: ${topic.content_type}`,
-    topic.audience && `Đối tượng: ${topic.audience}`,
-    topic.key_message && `Thông điệp chính: ${topic.key_message}`,
-    topic.facts && `Dữ kiện được phép dùng: ${topic.facts}`,
-    topic.fact_source_ids && `Nguồn dữ kiện: ${topic.fact_source_ids}`,
-    topic.cta && `CTA yêu cầu: ${topic.cta}`,
-    topic.required_text && `Nội dung bắt buộc: ${topic.required_text}`
-  ].filter(Boolean).join('\n');
+function writeAutomationError(action, entityType, entityId, details) {
+  db.prepare(`
+    INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, details_json, created_at)
+    VALUES (?, 'automation', ?, ?, ?, ?, ?)
+  `).run(
+    `audit_${crypto.randomUUID().slice(0, 12)}`,
+    action,
+    entityType,
+    entityId,
+    JSON.stringify(details),
+    new Date().toISOString()
+  );
 }
 
 async function syncRulesFromDrive(profile) {
@@ -56,11 +61,17 @@ async function syncRulesFromDrive(profile) {
   return { changed: true, version: created.version };
 }
 
-async function processTopic(profile, topic, scheduleOverride = null) {
+async function processTopic(profile, topic, scheduleOverride = null, scheduledRun = false) {
   const contentDate = scheduleOverride?.date || topic.content_date;
   const publishTime = scheduleOverride?.time || topic.publish_time || profile.time || '09:00';
 
   if (!contentDate || !publishTime) {
+    writeAutomationError('CONTENT_GENERATION_FAILED', 'topic', topic.id, {
+      profileId: profile.id,
+      topicId: topic.topic_id,
+      title: topic.topic_title,
+      error: 'Thiếu content_date hoặc publish_time trong CONTENT_PLAN.'
+    });
     return {
       topicId: topic.topic_id,
       title: topic.topic_title,
@@ -79,13 +90,42 @@ async function processTopic(profile, topic, scheduleOverride = null) {
     return { topicId: topic.topic_id, title: topic.topic_title, status: 'skipped', postId: post.id };
   }
 
+  // Approval is final. If Drive export previously failed, retry only the export step.
+  if (post?.status === 'APPROVED') {
+    try {
+      const exported = await exportPostToDrive(post.id);
+      return {
+        topicId: topic.topic_id,
+        title: topic.topic_title,
+        status: 'exported',
+        postId: post.id,
+        driveFolderUrl: exported.driveFolderUrl
+      };
+    } catch (error) {
+      writeAutomationError('DRIVE_EXPORT_FAILED', 'post', post.id, {
+        profileId: profile.id,
+        topicId: topic.topic_id,
+        title: topic.topic_title,
+        error: error.message
+      });
+      return { topicId: topic.topic_id, title: topic.topic_title, status: 'failed', postId: post.id, error: error.message };
+    }
+  }
+
+  // A user-created post is authoritative. Scheduled automation may publish it when ready,
+  // but must never regenerate its caption or image.
+  if (post && scheduledRun && post.creation_source === 'manual') {
+    return { topicId: topic.topic_id, title: topic.topic_title, status: 'skipped', postId: post.id };
+  }
+
   if (!post) {
     post = createPostFromTopic(
       profile.id,
       topic.topic_title,
       contentDate,
       publishTime,
-      topic.topic_id
+      topic.topic_id,
+      scheduledRun ? 'automation' : 'manual'
     );
   } else {
     post = getPostById(post.id);
@@ -100,23 +140,29 @@ async function processTopic(profile, topic, scheduleOverride = null) {
       topic.topic_title,
       profile.name,
       rule.content_markdown,
-      topicContext(topic)
+      ''
     );
     post = createNewRevision(post.id, {
       caption: caption.caption,
       headline: caption.headline,
-      cta: topic.cta || caption.cta,
+      cta: caption.cta,
       imageBrief: caption.imageBrief
     });
 
     updatePostStatus(post.id, 'GENERATING');
+    const imageInstruction = topic.image_rule
+      ? `Chủ đề: ${topic.topic_title}. Quy tắc hình ảnh riêng cho bài này: ${topic.image_rule}`
+      : (post.image_brief || caption.imageBrief || '');
     const image = await generateImage(
       topic.topic_title,
       profile.name,
       rule.content_markdown,
-      post.image_brief || caption.imageBrief
+      imageInstruction
     );
+    image.imageData = await applyProfileLogo(image.imageData, profile.logo_data);
+    image.imageMime = 'image/png';
     post = createNewRevision(post.id, {
+      imageBrief: imageInstruction,
       imageData: image.imageData,
       imageMime: image.imageMime
     });
@@ -133,6 +179,12 @@ async function processTopic(profile, topic, scheduleOverride = null) {
     };
   } catch (error) {
     updatePostStatus(post.id, 'DRAFT');
+    writeAutomationError('CONTENT_GENERATION_FAILED', 'post', post.id, {
+      profileId: profile.id,
+      topicId: topic.topic_id,
+      title: topic.topic_title,
+      error: error.message
+    });
     return {
       topicId: topic.topic_id,
       title: topic.topic_title,
@@ -145,7 +197,51 @@ async function processTopic(profile, topic, scheduleOverride = null) {
 
 let activeRun = null;
 
-async function executeContentAutomation({ profileId = null, topicIds = null, scheduleOverrides = {} } = {}) {
+function localDateTimeParts(timeZone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date());
+  const value = type => parts.find(part => part.type === type)?.value;
+  return { date: `${value('year')}-${value('month')}-${value('day')}`, time: `${value('hour')}:${value('minute')}` };
+}
+
+async function publishDuePosts(profile) {
+  const now = localDateTimeParts(profile.timezone || 'Asia/Ho_Chi_Minh');
+  const posts = db.prepare(`
+    SELECT id FROM posts
+    WHERE profile_id = ?
+      AND status IN ('APPROVED', 'READY_FOR_MANUAL_UPLOAD')
+      AND (topic_id IS NULL OR EXISTS (
+        SELECT 1 FROM topics t
+        WHERE t.profile_id = posts.profile_id AND t.topic_id = posts.topic_id
+      ))
+      AND (content_date < ? OR (content_date = ? AND scheduled_time <= ?))
+    ORDER BY content_date, scheduled_time, created_at
+  `).all(profile.id, now.date, now.date, now.time);
+
+  const results = [];
+  for (const post of posts) {
+    try {
+      const published = await publishPostToFacebook(post.id, {
+        uploaderId: 'automation',
+        pageTarget: profile.facebook_page_id,
+        note: 'Tự động đăng theo lịch của Content Profile'
+      });
+      results.push({ postId: post.id, success: true, postUrl: published.postUrl });
+    } catch (error) {
+      results.push({ postId: post.id, success: false, error: error.message });
+      writeAutomationError('FACEBOOK_PUBLISH_FAILED', 'post', post.id, {
+        profileId: profile.id,
+        error: error.message
+      });
+    }
+  }
+  return results;
+}
+
+async function executeContentAutomation({ profileId = null, topicIds = null, scheduleOverrides = {}, scheduled = false } = {}) {
   let profiles;
   if (profileId) {
     profiles = db.prepare('SELECT * FROM profiles WHERE id = ? AND active = 1').all(profileId);
@@ -159,14 +255,25 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
         `).all(...topicIds)
       : [];
   } else {
-    profiles = db.prepare('SELECT * FROM profiles WHERE active = 1 ORDER BY id').all();
+    profiles = db.prepare(`
+      SELECT * FROM profiles
+      WHERE active = 1 AND (? = 0 OR workflow_mode = 'auto')
+      ORDER BY id
+    `).all(scheduled ? 1 : 0);
   }
 
-  if (profiles.length === 0) throw new Error('Không có Content Profile đang hoạt động để chạy tự động.');
+  if (profiles.length === 0) {
+    if (scheduled) return {
+      success: true,
+      profiles: [],
+      summary: { profiles: 0, profileErrors: 0, exported: 0, skipped: 0, failed: 0, published: 0, publishFailed: 0 }
+    };
+    throw new Error('Không có Content Profile đang hoạt động để xử lý.');
+  }
 
   const report = [];
   for (const profile of profiles) {
-    const profileResult = { profileId: profile.id, synced: null, rule: null, topics: [] };
+    const profileResult = { profileId: profile.id, synced: null, rule: null, topics: [], publishing: [] };
     try {
       profileResult.rule = await syncRulesFromDrive(profile);
       if (!profile.sheet_id_topics) throw new Error('Chưa cấu hình Google Sheet CONTENT_PLAN.');
@@ -175,7 +282,6 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
       let topicQuery = `
         SELECT * FROM topics
         WHERE profile_id = ?
-          AND ${Array.isArray(topicIds) ? "status <> 'DISABLED'" : "status = 'READY'"}
       `;
       const topicParams = [profile.id];
       if (Array.isArray(topicIds)) {
@@ -191,24 +297,35 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
       const topics = db.prepare(topicQuery).all(...topicParams);
 
       for (const topic of topics) {
-        profileResult.topics.push(await processTopic(profile, topic, scheduleOverrides[topic.id] || null));
+        profileResult.topics.push(await processTopic(profile, topic, scheduleOverrides[topic.id] || null, scheduled));
       }
     } catch (error) {
       profileResult.error = error.message;
+      writeAutomationError('AUTOMATION_PROFILE_FAILED', 'profile', profile.id, { error: error.message });
+    }
+    if (scheduled && profile.workflow_mode === 'auto') {
+      try {
+        profileResult.publishing = await publishDuePosts(profile);
+      } catch (error) {
+        profileResult.publishError = error.message;
+      }
     }
     report.push(profileResult);
   }
 
   const allTopics = report.flatMap(item => item.topics);
+  const allPublishing = report.flatMap(item => item.publishing || []);
   return {
-    success: !report.some(item => item.error) && !allTopics.some(item => item.status === 'failed'),
+    success: !report.some(item => item.error || item.publishError) && !allTopics.some(item => item.status === 'failed') && !allPublishing.some(item => !item.success),
     profiles: report,
     summary: {
       profiles: report.length,
-      profileErrors: report.filter(item => item.error).length,
+      profileErrors: report.filter(item => item.error || item.publishError).length,
       exported: allTopics.filter(item => item.status === 'exported').length,
       skipped: allTopics.filter(item => item.status === 'skipped').length,
-      failed: allTopics.filter(item => item.status === 'failed').length
+      failed: allTopics.filter(item => item.status === 'failed').length,
+      published: allPublishing.filter(item => item.success).length,
+      publishFailed: allPublishing.filter(item => !item.success).length
     }
   };
 }

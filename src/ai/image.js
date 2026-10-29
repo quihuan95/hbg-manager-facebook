@@ -6,9 +6,14 @@ export async function generateImage(topic, profileName, ruleText, customBrief = 
   }
 
   const model = config.openai.imageModel || 'gpt-image-1';
-  const prompt = customBrief
-    ? `Commercial high quality advertising visual for ${profileName}. Concept: ${customBrief}. Style: elegant corporate photography, clean minimalist composition, sharp 8k details, no messy text or logos in AI layer.`
-    : `A sleek, high-end professional corporate photography for "${profileName}", representing the theme: "${topic}". Clean lighting, premium aesthetic, corporate elegance, 8k resolution style, no chaotic text overlay.`;
+  const profileRule = String(ruleText || '').trim();
+  const prompt = [
+    `Create a commercial-quality advertising visual for "${profileName}" about: "${topic}".`,
+    'Style priority, from highest to lowest: manual prompt, Sheet image rule, default Profile rule. When style directions conflict, follow the higher-priority direction. Brand safety, factual accuracy, and prohibitions always remain mandatory.',
+    customBrief && `Higher-priority article image direction:\n${customBrief}`,
+    profileRule && `Lowest-priority default Profile rules:\n${profileRule}`,
+    'Use a clean, professional composition. Do not invent logos, claims, prices, people, venues, or factual evidence. Avoid messy text in the generated image.'
+  ].filter(Boolean).join('\n\n');
 
   const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',

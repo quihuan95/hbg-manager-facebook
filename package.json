@@ -1,6 +1,6 @@
 {
   "name": "hbg-content-studio-phase1",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "description": "The HBG Content Studio - Phase 1 Desktop App",
   "main": "electron/main.js",
@@ -42,5 +42,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }
+  },
+  "dependencies": {
+    "sharp": "^0.35.5"
   }
 }

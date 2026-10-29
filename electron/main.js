@@ -10,6 +10,11 @@ const appUrl = 'http://127.0.0.1:8080';
 let mainWindow;
 let backendServer;
 
+process.on('hbg-app-restart', () => {
+  app.relaunch();
+  app.exit(0);
+});
+
 function prepareRuntimePaths() {
   const userData = app.getPath('userData');
   const dataDir = path.join(userData, 'data');

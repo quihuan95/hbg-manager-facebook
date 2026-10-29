@@ -35,11 +35,12 @@ export function getAllPosts(filterStatus = null, filterProfile = null) {
 
 export function getPostById(postId) {
   return db.prepare(`
-    SELECT p.*, prof.name as profile_name, prof.type as profile_type, prof.folder_id_output, prof.page_name, prof.facebook_page_id,
+    SELECT p.*, prof.name as profile_name, prof.type as profile_type, prof.folder_id_output, prof.page_name, prof.facebook_page_id, prof.logo_data,
            r.id as revision_id, r.topic_title, r.caption, r.headline, r.cta, r.image_brief, r.image_data, r.image_mime, r.revision_number, r.revision_hash, r.rule_version_id, r.rule_hash, r.topic_snapshot_json, r.validation_findings_json,
            app.approved_at, app.approver_id,
            exp.status as export_status, exp.drive_folder_id, exp.drive_caption_file_id, exp.drive_image_file_id, exp.drive_manifest_file_id, exp.drive_review_file_id,
            mu.uploaded_at as manually_uploaded_at, mu.post_url as manual_post_url, mu.note as manual_note, mu.target_page as manual_target_page,
+           (SELECT t.image_rule FROM topics t WHERE t.profile_id = p.profile_id AND t.topic_id = p.topic_id LIMIT 1) as sheet_image_rule,
            (SELECT ae.details_json FROM audit_events ae WHERE ae.entity_id = p.id AND ae.action = 'REQUEST_CHANGES' ORDER BY ae.created_at DESC LIMIT 1) as change_request_details_json,
            (SELECT ae.actor_id FROM audit_events ae WHERE ae.entity_id = p.id AND ae.action = 'REQUEST_CHANGES' ORDER BY ae.created_at DESC LIMIT 1) as change_requested_by,
            (SELECT ae.created_at FROM audit_events ae WHERE ae.entity_id = p.id AND ae.action = 'REQUEST_CHANGES' ORDER BY ae.created_at DESC LIMIT 1) as change_requested_at
@@ -53,7 +54,7 @@ export function getPostById(postId) {
   `).get(postId);
 }
 
-export function createPostFromTopic(profileId, topicTitle, contentDate = null, scheduledTime = '09:00', topicId = null) {
+export function createPostFromTopic(profileId, topicTitle, contentDate = null, scheduledTime = '09:00', topicId = null, creationSource = 'manual') {
   const profile = getProfileById(profileId);
   if (!profile) throw new Error('Profile không tồn tại.');
 
@@ -87,9 +88,9 @@ export function createPostFromTopic(profileId, topicTitle, contentDate = null, s
 
   // Create post
   db.prepare(`
-    INSERT INTO posts (id, profile_id, topic_id, content_date, scheduled_time, current_revision_id, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?)
-  `).run(postId, profileId, topicId, date, scheduledTime, revisionId, now, now);
+    INSERT INTO posts (id, profile_id, topic_id, content_date, scheduled_time, current_revision_id, creation_source, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?)
+  `).run(postId, profileId, topicId, date, scheduledTime, revisionId, creationSource === 'automation' ? 'automation' : 'manual', now, now);
 
   // Create revision 1
   db.prepare(`

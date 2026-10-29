@@ -2,12 +2,27 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+function googleSheetUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  const id = match?.[1] || (/^[a-zA-Z0-9_-]+$/.test(raw) ? raw : '');
+  return id ? `https://docs.google.com/spreadsheets/d/${encodeURIComponent(id)}/edit` : '';
+}
+
+function facebookPageUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\/(?:www\.)?(?:facebook|fb)\.com\//i.test(raw)) return raw;
+  return `https://www.facebook.com/${encodeURIComponent(raw)}`;
+}
+
 const labels = {
   DRAFT: 'Nháp',
   GENERATING: 'Đang tạo AI...',
   NEEDS_REVIEW: 'Chờ duyệt',
   APPROVED: 'Đã duyệt',
-  READY_FOR_MANUAL_UPLOAD: 'Chờ đăng thủ công',
+  READY_FOR_MANUAL_UPLOAD: 'Sẵn sàng đăng',
   MANUALLY_UPLOADED: 'Đã đăng xong',
   ARCHIVED: 'Đã lưu trữ'
 };
@@ -31,6 +46,7 @@ let filter = '';
 let query = '';
 let studioReturnRoute = 'created_posts';
 let calendarMonth = new Date().toISOString().slice(0, 7);
+let logPage = 1;
 
 function toast(t, isError = false) {
   const el = $('#toast');
@@ -40,6 +56,15 @@ function toast(t, isError = false) {
   el.style.background = isError ? '#8b0000' : '#142747';
   clearTimeout(window.toastTimer);
   window.toastTimer = setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
+function setPublishLoading(loading, idleText = 'Đăng bài') {
+  const submitButton = $('#modalForm button[type="submit"]');
+  if (!submitButton) return;
+  submitButton.disabled = loading;
+  submitButton.innerHTML = loading
+    ? '<span class="button-spinner" aria-hidden="true"></span>Đang đăng...'
+    : esc(idleText);
 }
 
 function goto(r) {
@@ -65,7 +90,18 @@ function badge(s) {
 
 function mark(p) {
   if (!p) return '<span class="mark">HB</span>';
-  return `<span class="mark ${p.id === 'DANANG_EVENTS' ? 'dne' : p.id === 'HCMC_EVENTS' ? 'hcmc' : ''}">${esc((p.name || 'HB').split(' ').map(x => x[0]).join('').slice(0, 2))}</span>`;
+  if (p.logo_data) return `<span class="mark profile-logo"><img src="${esc(p.logo_data)}" alt="Logo ${esc(p.name)}"></span>`;
+  const color = /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color : '#4970d5';
+  return `<span class="mark profile-mark" style="--profile-color:${esc(color)}">${esc((p.name || 'HB').split(' ').map(x => x[0]).join('').slice(0, 2))}</span>`;
+}
+
+function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Không thể đọc file logo.'));
+    reader.readAsDataURL(file);
+  });
 }
 
 // API Fetch Helpers
@@ -144,6 +180,9 @@ async function renderQueue() {
     cachedPosts = [];
   }
 
+  // The Create view is an inbox: once a topic has a post, it belongs in Created Posts.
+  if (queueMode === 'create_posts') syncedTopics = syncedTopics.filter(topic => !topic.post_id);
+
   const publishingStatuses = ['APPROVED', 'READY_FOR_MANUAL_UPLOAD', 'MANUALLY_UPLOADED'];
   const statusOptions = Object.entries(labels).filter(([key]) => queueMode !== 'publishing' || publishingStatuses.includes(key));
   let jobs = cachedPosts.filter(j =>
@@ -161,7 +200,7 @@ async function renderQueue() {
       ${[
         [cachedPosts.length, 'Tổng số bài viết', 'Lưu bền vững trong Database'],
         [reviewCount, 'Chờ duyệt nội dung', 'Cần kiểm tra caption và ảnh'],
-        [readyCount, 'Chờ đăng thủ công', 'Đã xuất đủ bộ Drive'],
+        [readyCount, 'Sẵn sàng đăng', 'Đang chờ đăng theo chế độ Profile'],
         [uploadedCount, 'Đã đăng hoàn tất', 'Đã lưu vết kiểm toán']
       ].map(x => `
         <div class="stat">
@@ -190,14 +229,12 @@ async function renderQueue() {
             ${syncedTopics.map(t => {
               const finished = ['READY_FOR_MANUAL_UPLOAD', 'MANUALLY_UPLOADED'].includes(t.post_status);
               const hasSchedule = /^\d{4}-\d{2}-\d{2}$/.test(t.content_date || '') && Boolean(t.publish_time);
-              const canGenerate = t.status !== 'DISABLED' && hasSchedule && !finished;
-              const canCreateOne = t.status !== 'DISABLED' && !finished;
-              const availability = !hasSchedule
-                ? ' · Thiếu ngày/giờ'
-                : (t.status === 'HOLD' ? ' · Có thể tạo thủ công' : '');
+              const canGenerate = hasSchedule && !finished;
+              const canCreateOne = !finished;
+              const availability = !hasSchedule ? ' · Thiếu ngày/giờ' : '';
               return `<tr>
                 <td><input type="checkbox" data-topic-select value="${esc(t.id)}" ${canGenerate ? '' : 'disabled'} aria-label="Chọn ${esc(t.topic_title)}"></td>
-                <td><div class="topic">${esc(t.topic_title)}</div><small>${esc(t.topic_id)} · Sheet: ${esc(t.status)}${esc(availability)}</small></td>
+                <td><div class="topic" title="${esc(t.topic_title)}">${esc(t.topic_title)}</div><small>${esc(t.topic_id)} · Đã chốt từ Sheet${esc(availability)}</small></td>
                 <td class="profile-cell">${esc(t.profile_name || t.profile_id)}</td>
                 <td class="schedule-cell">${esc(t.content_date || 'Chưa có ngày')} <small>${esc(t.publish_time || 'Chưa có giờ')} · GMT+7</small></td>
                 <td class="status-cell">${t.post_id ? badge(t.post_status) : '<span class="tag">Chưa tạo</span>'}</td>
@@ -227,7 +264,7 @@ async function renderQueue() {
         </div>
       </div>
       <div class="tablewrap">
-        <table>
+        <table class="queue-table post-queue-table">
           <thead>
             <tr>
               <th><input type="checkbox" id="selectAllPosts" aria-label="Chọn tất cả bài"></th>
@@ -245,7 +282,7 @@ async function renderQueue() {
                 <tr>
                   <td><input type="checkbox" data-post-select value="${esc(j.id)}" aria-label="Chọn ${esc(j.topic_title)}"></td>
                   <td>
-                    <div class="topic">${esc(j.topic_title)}</div>
+                    <div class="topic" title="${esc(j.topic_title)}">${esc(j.topic_title)}</div>
                     <small>Revision ${j.revision_number || 1} · ${j.headline ? esc(j.headline.slice(0, 40)) + '...' : 'Chưa có headline'}</small>
                   </td>
                   <td>
@@ -256,17 +293,17 @@ async function renderQueue() {
                   </td>
                   <td>${esc(j.content_date)} <small>${esc(j.scheduled_time || '09:00')} · GMT+7</small></td>
                   <td>${badge(j.status)}</td>
-                  <td>
+                  <td><div class="row-actions">
                     ${['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(j.status)
-                      ? `<button data-publish="${j.id}" class="primary">Đăng bài</button>`
+                      ? `<button data-publish="${j.id}" class="primary" title="Đăng bài lên Facebook">Đăng</button>`
                       : j.status === 'MANUALLY_UPLOADED'
-                        ? `<button data-publish="${j.id}" style="border:1px solid #1877f2;color:#1877f2;background:#f0f7ff;font-weight:600">↻ Đăng lại</button>`
+                        ? `<button data-publish="${j.id}" title="Đăng lại lên Facebook" style="border:1px solid #1877f2;color:#1877f2;background:#f0f7ff;font-weight:600">↻ Đăng lại</button>`
                         : ''}
-                    <button data-open="${j.id}" class="${j.status === 'READY_FOR_MANUAL_UPLOAD' ? 'primary' : ''}">
-                      ${j.status === 'READY_FOR_MANUAL_UPLOAD' ? '📋 Xem & Đăng' : 'Mở Studio'}
+                    <button data-open="${j.id}" title="Mở bài trong Studio" class="${j.status === 'READY_FOR_MANUAL_UPLOAD' ? 'primary' : ''}">
+                      ${j.status === 'READY_FOR_MANUAL_UPLOAD' ? 'Xem' : 'Mở'}
                     </button>
-                    <button data-delete="${j.id}" title="Xóa bài">🗑</button>
-                  </td>
+                    <button data-delete="${j.id}" class="icon-button" title="Xóa bài" aria-label="Xóa bài">🗑</button>
+                  </div></td>
                 </tr>
               `;
             }).join('') || '<tr><td colspan="6" class="empty">Chưa có bài viết. Chọn lịch ở bảng phía trên rồi bấm <b>Tạo bài đã chọn</b>.</td></tr>'}
@@ -419,6 +456,7 @@ async function renderQueue() {
         const method = f.get('publishMethod');
         const pageTarget = f.get('pageTarget');
         const note = f.get('note');
+        setPublishLoading(true);
         try {
           if (method === 'auto') {
             const res = await api(`/api/posts/${encodeURIComponent(post.id)}/publish-facebook`, {
@@ -436,6 +474,7 @@ async function renderQueue() {
           await renderQueue();
         } catch (err) {
           toast(`Lỗi đăng bài: ${err.message}`, true);
+          setPublishLoading(false, isRePublish ? 'Đăng lại' : 'Đăng bài');
           return false;
         }
       });
@@ -544,7 +583,7 @@ async function runAutomation(button, topicIds = null, scheduleOverrides = {}) {
   const originalText = button?.textContent || '⚡ Tạo bài tự động';
   if (button) {
     button.disabled = true;
-    button.textContent = '⏳ Đang đọc Sheet và tạo bài...';
+    button.textContent = 'Đang tạo...';
   }
   try {
     const result = await api('/api/automation/run', {
@@ -575,7 +614,7 @@ async function syncAllProfiles(button, onDone = null) {
   try {
     const result = await api('/api/profiles/sync-all', { method: 'POST' });
     const summary = result.summary || {};
-    toast(`Đồng bộ ${summary.succeeded || 0}/${summary.profiles || 0} profile · Thêm: ${summary.imported || 0} · Cập nhật: ${summary.updated || 0}`, !result.success);
+    toast(`Đồng bộ ${summary.succeeded || 0}/${summary.profiles || 0} profile · Thêm: ${summary.imported || 0} · Cập nhật: ${summary.updated || 0} · Gỡ lịch: ${summary.removed || 0} · Lưu trữ: ${summary.archivedPosts || 0} · Xóa bài: ${summary.removedPosts || 0}`, !result.success);
     if (onDone) await onDone();
   } catch (err) {
     toast(`Lỗi đồng bộ tất cả: ${err.message}`, true);
@@ -664,7 +703,7 @@ async function renderStudio() {
       </section>
     ` : ''}
 
-    <div class="layout">
+    <div class="studio-stack">
       <div>
         <section class="panel">
           <div class="panelhead">
@@ -697,12 +736,17 @@ async function renderStudio() {
           ` : `
             <div class="placeholder">
               <strong>Chưa có hình ảnh</strong>
-              <span>Bấm nút <b>✨ Sinh ảnh bằng DALL-E</b> hoặc tải ảnh từ máy tính.</span>
+              <span>Bấm nút <b>✨ Sinh ảnh bằng AI</b> hoặc tải ảnh từ máy tính.</span>
             </div>
           `}
 
+          <label>Prompt tạo ảnh (tùy chọn)
+            <textarea id="imagePrompt" rows="4" placeholder="Ví dụ: Không gian hội nghị hiện đại, góc rộng, ánh sáng tự nhiên, tông xanh navy, không có chữ..."></textarea>
+          </label>
+          ${post.sheet_image_rule ? `<div class="image-rule-note"><b>Rule ảnh từ Sheet</b><span>${esc(post.sheet_image_rule)}</span></div>` : ''}
+          <p class="muted">Ưu tiên phong cách: prompt nhập tay → Rule ảnh từ Sheet → Rule chung của Content Profile.</p>
           <div class="actions" style="margin: 16px 0 10px;">
-            <button id="aiImage" class="primary">✨ Sinh ảnh bằng DALL-E (AI)</button>
+            <button id="aiImage" class="primary">✨ Sinh ảnh bằng AI</button>
           </div>
           <p class="muted" id="aiImageStatus"></p>
 
@@ -801,15 +845,18 @@ async function renderStudio() {
   $('#aiImage').onclick = async () => {
     const btn = $('#aiImage');
     btn.disabled = true;
-    btn.textContent = '⏳ Đang vẽ ảnh với DALL-E (10-15s)...';
+    btn.textContent = 'Đang tạo...';
     try {
-      const res = await api(`/api/posts/${post.id}/generate-image`, { method: 'POST' });
-      toast('Đã tạo ảnh mới bằng DALL-E thành công!');
+      await api(`/api/posts/${post.id}/generate-image`, {
+        method: 'POST',
+        body: JSON.stringify({ imageBrief: $('#imagePrompt').value.trim() })
+      });
+      toast('Đã tạo ảnh mới bằng AI thành công!');
       renderStudio();
     } catch (err) {
       toast(`Lỗi tạo ảnh: ${err.message}`, true);
       btn.disabled = false;
-      btn.textContent = '✨ Sinh ảnh bằng DALL-E (AI)';
+      btn.textContent = '✨ Sinh ảnh bằng AI';
     }
   };
 
@@ -862,15 +909,20 @@ async function renderStudio() {
 
   // Approve
   $('#approveBtn').onclick = async () => {
+    const button = $('#approveBtn');
+    button.disabled = true;
+    button.textContent = 'Đang duyệt & xuất Drive...';
     try {
       await api(`/api/posts/${post.id}/approve`, {
         method: 'POST',
         body: JSON.stringify({ approverId: 'u_admin' })
       });
-      toast('Phê duyệt bài viết thành công!');
+      toast('Đã phê duyệt và xuất bài lên OUTPUT Drive!');
       renderStudio();
     } catch (err) {
       toast(`Lỗi duyệt bài: ${err.message}`, true);
+      button.disabled = false;
+      button.textContent = 'Phê duyệt bản này (Approve)';
     }
   };
 
@@ -956,7 +1008,8 @@ async function renderStudio() {
         </label>
       `, async f => {
         autoPublishFbBtn.disabled = true;
-        autoPublishFbBtn.textContent = '⏳ Đang đăng lên Facebook...';
+        autoPublishFbBtn.textContent = 'Đang đăng...';
+        setPublishLoading(true);
         try {
           const res = await api(`/api/posts/${post.id}/publish-facebook`, {
             method: 'POST',
@@ -971,6 +1024,7 @@ async function renderStudio() {
           toast(`Lỗi đăng bài: ${err.message}`, true);
           autoPublishFbBtn.disabled = false;
           autoPublishFbBtn.textContent = isRePublish ? '↻ Đăng lại lên Facebook' : '🚀 Tự động đăng lên Facebook';
+          setPublishLoading(false, isRePublish ? 'Đăng lại' : 'Đăng bài');
           return false;
         }
       });
@@ -1029,21 +1083,26 @@ async function renderProfiles() {
             ${mark(p)}
             <div>
               <h3>${esc(p.name)}</h3>
-              <span class="pill">${esc(p.type)} · ${esc(p.brand || 'HBG')}</span>
             </div>
+            <span class="tag profile-status ${p.active ? 'approved' : ''}">${p.active ? 'Đang bật' : 'Tạm dừng'}</span>
           </div>
           <div class="details">
             <span>Folder OUTPUT</span><b>${esc(p.folder_id_output || 'Chưa cấu hình')}</b>
             <span>Google Sheet ID</span><b>${esc(p.sheet_id_topics || 'Chưa cấu hình')}</b>
             <span>Facebook Page</span><b>${esc(p.page_name || 'Chưa cấu hình')}${p.facebook_page_id ? ` · ${esc(p.facebook_page_id)}` : ''}</b>
+            <span>Logo</span><b>${p.logo_data ? 'Đã tải lên' : 'Chưa cấu hình'}</b>
+            <span>Chế độ</span><b>${p.workflow_mode === 'auto' ? 'Tự động tạo & đăng' : 'Thủ công'}</b>
+            <span>Khi xóa khỏi Sheet</span><b>${p.retain_removed_posts ? 'Lưu trữ bài đã tạo' : 'Xóa bài khỏi ứng dụng'}</b>
             <span>Giờ đăng mẫu</span><b>${esc(p.time || '09:00')} · GMT+7</b>
           </div>
           <div class="cardfoot">
-            <span class="tag ${p.active ? 'approved' : ''}">${p.active ? 'Đang bật' : 'Tạm dừng'}</span>
             <div>
-              <button data-sync="${p.id}" ${p.sheet_id_topics ? '' : 'disabled'}>📥 Đồng bộ Sheet</button>
-              <button data-edit="${p.id}">Cấu hình</button>
+              <button data-sync="${p.id}" title="Đồng bộ Google Sheet" ${p.sheet_id_topics ? '' : 'disabled'}>Đồng bộ</button>
+              ${googleSheetUrl(p.sheet_id_topics) ? `<a class="button compact" href="${esc(googleSheetUrl(p.sheet_id_topics))}" target="_blank" rel="noopener noreferrer" title="Mở Google Sheet">Mở Sheet ↗</a>` : ''}
+              ${facebookPageUrl(p.facebook_page_id) ? `<a class="button compact" href="${esc(facebookPageUrl(p.facebook_page_id))}" target="_blank" rel="noopener noreferrer" title="Mở Facebook Page ${esc(p.page_name || p.name)}">Mở Page ↗</a>` : ''}
+              <button data-edit="${p.id}">Sửa</button>
               <button data-toggle="${p.id}">${p.active ? 'Tạm dừng' : 'Bật'}</button>
+              <button class="danger" data-delete-profile="${p.id}">Xóa</button>
             </div>
           </div>
         </article>
@@ -1075,12 +1134,25 @@ async function renderProfiles() {
       b.textContent = '⏳ Đang đồng bộ...';
       try {
         const res = await api(`/api/profiles/${b.dataset.sync}/sync-sheet`, { method: 'POST' });
-        toast(`Đã đồng bộ xong! Thêm: ${res.imported}, Cập nhật: ${res.updated}`);
+        toast(`Đã đồng bộ xong! Thêm: ${res.imported}, Cập nhật: ${res.updated}, Gỡ: ${res.removed || 0} lịch, Lưu trữ: ${res.archivedPosts || 0}, Xóa bài: ${res.removedPosts || 0}`);
         renderProfiles();
       } catch (err) {
         toast(`Lỗi đồng bộ Sheet: ${err.message}`, true);
         b.disabled = false;
         b.textContent = '📥 Đồng bộ Sheet';
+      }
+    };
+  });
+  document.querySelectorAll('[data-delete-profile]').forEach(b => {
+    b.onclick = async () => {
+      const p = cachedProfiles.find(x => x.id === b.dataset.deleteProfile);
+      if (!p || !confirm(`Xóa Content Profile “${p.name}”?\n\nCác lịch nội dung, bài viết và Rule thuộc profile này cũng sẽ bị xóa. Thao tác này không thể hoàn tác.`)) return;
+      try {
+        await api(`/api/profiles/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
+        toast(`Đã xóa Content Profile ${p.name}.`);
+        renderProfiles();
+      } catch (err) {
+        toast(`Lỗi xóa Profile: ${err.message}`, true);
       }
     };
   });
@@ -1093,23 +1165,64 @@ function editProfile(p) {
       <label>Thể loại<input name="type" value="${esc(p?.type || '')}" required placeholder="Hội nghị / Du lịch..."></label>
       <label>Giờ đăng dự kiến<input type="time" name="time" value="${p?.time || '09:00'}" required></label>
     </div>
+    <label class="profile-color-field">Màu nhận diện trên lịch
+      <input type="color" name="color" value="${esc(p?.color || '#4970d5')}">
+      <span>Mỗi bài của profile sẽ dùng màu này trên Lịch nội dung.</span>
+    </label>
+    <label>Logo thương hiệu (PNG/JPEG/WebP, tối đa 3 MB)
+      <input type="file" name="logo_file" accept="image/png,image/jpeg,image/webp">
+    </label>
+    ${p?.logo_data ? `<div class="profile-logo-preview"><img src="${esc(p.logo_data)}" alt="Logo hiện tại"><span>Logo hiện tại · tải file mới để thay thế</span></div>` : ''}
+    <label>Chế độ vận hành
+      <select name="workflow_mode">
+        <option value="manual" ${p?.workflow_mode !== 'auto' ? 'selected' : ''}>Thủ công — tự tạo, duyệt và đăng bài</option>
+        <option value="auto" ${p?.workflow_mode === 'auto' ? 'selected' : ''}>Tự động — tạo bài và đăng đúng lịch</option>
+      </select>
+    </label>
+    <p class="muted">Chế độ tự động yêu cầu OpenAI, Google Drive và Facebook Page Token hoạt động. Mọi dòng trong Sheet đều được xem là lịch đã chốt.</p>
+    <div class="switch-setting">
+      <div>
+        <b>Giữ bài đã tạo khi đồng bộ</b>
+        <small>Bật: bài không còn trong Sheet sẽ được lưu trữ. Tắt: bài sẽ bị xóa khỏi ứng dụng.</small>
+      </div>
+      <label class="switch" title="Giữ bài đã tạo khi không còn trong Sheet">
+        <input type="checkbox" name="retain_removed_posts" value="1" ${p?.retain_removed_posts !== 0 ? 'checked' : ''}>
+        <span class="switch-slider"></span>
+      </label>
+    </div>
     <div class="formrow">
       <label>Thư mục Drive RULES (ID hoặc đường dẫn)<input name="folder_id_rules" value="${esc(p?.folder_id_rules || '')}" placeholder="Khuyên dùng Folder ID, ví dụ: 1a2B..."></label>
       <label>Thư mục Drive OUTPUT (ID hoặc đường dẫn)<input name="folder_id_output" value="${esc(p?.folder_id_output || '')}" placeholder="Khuyên dùng Folder ID, ví dụ: 1a2B..."></label>
     </div>
     <p class="muted">Mở từng thư mục trên Google Drive và sao chép phần ID sau <b>/folders/</b> trong URL. Folder ID ổn định hơn đường dẫn theo tên.</p>
-    <label>Google Sheet ID chứa tab TOPICS<input name="sheet_id_topics" value="${esc(p?.sheet_id_topics || '')}" placeholder="Ví dụ: 1BxiMVs0XR..."></label>
+    <label>Google Sheet ID chứa tab TOPICS
+      <div class="input-with-action">
+        <input name="sheet_id_topics" value="${esc(p?.sheet_id_topics || '')}" placeholder="Ví dụ: 1BxiMVs0XR...">
+        ${googleSheetUrl(p?.sheet_id_topics) ? `<a class="button" href="${esc(googleSheetUrl(p.sheet_id_topics))}" target="_blank" rel="noopener noreferrer">Mở Sheet ↗</a>` : ''}
+      </div>
+    </label>
+    <p class="muted">Tab TOPICS cần 4 cột: <b>topic_id</b>, <b>content_date</b>, <b>publish_time</b>, <b>topic_title</b>. Có thể thêm <b>image_rule</b>; để trống sẽ dùng Rule ảnh mặc định của Profile.</p>
     <div class="formrow">
       <label>Tên Facebook Page<input name="page_name" value="${esc(p?.page_name || '')}" placeholder="Ví dụ: Danang Events"></label>
-      <label>Facebook Page ID hoặc link<input name="facebook_page_id" value="${esc(p?.facebook_page_id || '')}" placeholder="123456789012345 hoặc https://facebook.com/ten-page"></label>
+      <label>Facebook Page ID hoặc link
+        <div class="input-with-action">
+          <input name="facebook_page_id" value="${esc(p?.facebook_page_id || '')}" placeholder="123456789012345 hoặc https://facebook.com/ten-page">
+          ${facebookPageUrl(p?.facebook_page_id) ? `<a class="button" href="${esc(facebookPageUrl(p.facebook_page_id))}" target="_blank" rel="noopener noreferrer">Mở Page ↗</a>` : ''}
+        </div>
+      </label>
     </div>
     <p class="muted">Mỗi Content Profile gắn với một Facebook Page. ID hoặc link này sẽ tự động là đích đăng mặc định của các bài thuộc profile.</p>
   `, async f => {
     try {
+      const logoFile = f.get('logo_file');
+      if (logoFile?.size > 3 * 1024 * 1024) throw new Error('Logo không được vượt quá 3 MB.');
       const payload = {
         name: f.get('name').trim(),
         type: f.get('type').trim(),
         time: f.get('time'),
+        color: f.get('color'),
+        workflow_mode: f.get('workflow_mode'),
+        retain_removed_posts: f.has('retain_removed_posts'),
         folder_id_rules: f.get('folder_id_rules').trim(),
         folder_id_output: f.get('folder_id_output').trim(),
         sheet_id_topics: f.get('sheet_id_topics').trim(),
@@ -1117,6 +1230,7 @@ function editProfile(p) {
         facebook_page_id: f.get('facebook_page_id').trim(),
         active: p ? p.active : true
       };
+      if (logoFile?.size) payload.logo_data = await readImageFile(logoFile);
       if (p) {
         await api(`/api/profiles/${p.id}`, { method: 'PATCH', body: JSON.stringify(payload) });
         toast('Cập nhật Profile thành công!');
@@ -1150,9 +1264,16 @@ async function renderRules() {
             <h2>${esc(profile.name)}</h2>
             <span class="tag">Rule v${latestRule?.version || 1}</span>
           </div>
-          <div class="ruletext">${esc(latestRule?.content_markdown || 'Chưa có rule')}</div>
+          <details class="rule-details">
+            <summary title="Bấm để xem toàn bộ quy tắc">
+              <span class="rule-preview">${esc(latestRule?.content_markdown || 'Chưa có rule')}</span>
+              <span class="rule-toggle"><span class="show-label">Xem đầy đủ</span><span class="hide-label">Thu gọn</span>⌄</span>
+            </summary>
+            <div class="ruletext">${esc(latestRule?.content_markdown || 'Chưa có rule')}</div>
+          </details>
           <div class="actions">
-            <button data-rule="${profile.id}">Chỉnh sửa & Tạo Rule Version mới</button>
+            <button data-rule="${profile.id}" title="Chỉnh sửa và tạo Rule Version mới">Sửa / tạo phiên bản</button>
+            ${latestRule ? `<button class="danger" data-delete-rules="${profile.id}">Xóa Rule</button>` : ''}
           </div>
         </section>
       `).join('')}
@@ -1185,6 +1306,19 @@ async function renderRules() {
       });
     };
   });
+  document.querySelectorAll('[data-delete-rules]').forEach(b => {
+    b.onclick = async () => {
+      const p = cachedProfiles.find(x => x.id === b.dataset.deleteRules);
+      if (!p || !confirm(`Xóa toàn bộ Rule Versions của “${p.name}”?\n\nCác bài đã tạo vẫn giữ snapshot Rule cũ, nhưng profile sẽ không thể tạo bài mới cho đến khi có Rule mới.`)) return;
+      try {
+        const result = await api(`/api/profiles/${encodeURIComponent(p.id)}/rules`, { method: 'DELETE' });
+        toast(`Đã xóa ${result.deletedVersions} Rule Version của ${p.name}.`);
+        renderRules();
+      } catch (err) {
+        toast(`Lỗi xóa Rule: ${err.message}`, true);
+      }
+    };
+  });
 }
 
 async function renderCalendar() {
@@ -1196,22 +1330,26 @@ async function renderCalendar() {
     toast(`Không tải được lịch nội dung: ${err.message}`, true);
   }
 
-  const topicKeys = new Set(topics.map(t => `${t.profile_id}:${t.topic_id}`));
   const entries = topics.map(t => ({
     date: t.content_date,
     time: t.publish_time || '09:00',
     title: t.topic_title,
     profileName: t.profile_name || t.profile_id,
+    profileId: t.profile_id,
+    profileColor: cachedProfiles.find(p => p.id === t.profile_id)?.color || '#4970d5',
+    syncedTopicId: t.id,
     postId: t.post_id,
     status: t.post_status || `SHEET_${t.status}`
   }));
   for (const post of cachedPosts) {
-    if (post.topic_id && topicKeys.has(`${post.profile_id}:${post.topic_id}`)) continue;
+    if (post.topic_id) continue;
     entries.push({
       date: post.content_date,
       time: post.scheduled_time || '09:00',
       title: post.topic_title,
       profileName: post.profile_name,
+      profileId: post.profile_id,
+      profileColor: cachedProfiles.find(p => p.id === post.profile_id)?.color || '#4970d5',
       postId: post.id,
       status: post.status
     });
@@ -1227,14 +1365,11 @@ async function renderCalendar() {
   for (let day = 1; day <= daysInMonth; day++) {
     const date = `${calendarMonth}-${String(day).padStart(2, '0')}`;
     const dateEntries = entries.filter(item => item.date === date).sort((a, b) => a.time.localeCompare(b.time));
-    days.push(`<div class="day"><b>${day}</b>${dateEntries.map(item => {
-      const statusText = item.status.startsWith('SHEET_')
-        ? `Từ Sheet · ${item.status.slice(6)}`
-        : (labels[item.status] || item.status);
-      return `<div class="calitem" ${item.postId ? `data-open="${esc(item.postId)}"` : ''}>
-        ${esc(item.time)} · ${esc(item.profileName)}<br>${esc(item.title)}<br>${esc(statusText)}
-      </div>`;
-    }).join('')}</div>`);
+    days.push(`<button class="day calendar-day" data-calendar-date="${date}" title="${dateEntries.length ? `Xem ${dateEntries.length} bài` : 'Không có bài'}">
+      <b>${day}</b>
+      <span class="calendar-dots">${dateEntries.map(item => `<i style="--profile-color:${esc(item.profileColor)}" title="${esc(item.profileName)} · ${esc(item.title)}"></i>`).join('')}</span>
+      ${dateEntries.length ? `<small>${dateEntries.length} bài</small>` : ''}
+    </button>`);
   }
 
   const undated = entries.filter(item => !/^\d{4}-\d{2}-\d{2}$/.test(item.date || ''));
@@ -1248,11 +1383,19 @@ async function renderCalendar() {
           <button id="nextMonth">Tháng sau ›</button>
         </div>
       </div>
+      <div class="calendar-legend">
+        <b>Chú giải:</b>
+        ${cachedProfiles.map(p => `<span><i style="--profile-color:${esc(p.color || '#4970d5')}"></i>${esc(p.name)}</span>`).join('')}
+      </div>
       <div class="tablewrap"><div class="calendar">
         ${['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(d => `<div class="calheading">${d}</div>`).join('')}
         ${'<div class="day"></div>'.repeat(firstDayOffset)}${days.join('')}
       </div></div>
     </section>
+    <dialog id="calendarDayDialog" class="calendar-dialog">
+      <div class="modalhead"><h2 id="calendarDayTitle"></h2><button type="button" id="closeCalendarDay" aria-label="Đóng">×</button></div>
+      <div id="calendarDayBody"></div>
+    </dialog>
     ${undated.length ? `<section class="panel"><h2>Lịch chưa có ngày</h2>${undated.map(item => `<div class="check"><span>${esc(item.title)}<small>${esc(item.profileName)}</small></span><b>${esc(item.status)}</b></div>`).join('')}</section>` : ''}
   `;
 
@@ -1264,33 +1407,110 @@ async function renderCalendar() {
   $('#prevMonth').onclick = () => moveMonth(-1);
   $('#nextMonth').onclick = () => moveMonth(1);
   $('#calendarMonth').onchange = e => { calendarMonth = e.target.value; renderCalendar(); };
-  document.querySelectorAll('[data-open]').forEach(item => {
-    item.onclick = () => { currentPostId = item.dataset.open; goto('studio'); };
+  document.querySelectorAll('[data-calendar-date]').forEach(dayButton => {
+    dayButton.onclick = () => {
+      const date = dayButton.dataset.calendarDate;
+      const dateEntries = entries.filter(item => item.date === date).sort((a, b) => a.time.localeCompare(b.time));
+      if (!dateEntries.length) return;
+      $('#calendarDayTitle').textContent = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'full', timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date(`${date}T00:00:00+07:00`));
+      $('#calendarDayBody').innerHTML = dateEntries.map(item => {
+        const statusText = item.status.startsWith('SHEET_') ? 'Đã chốt từ Sheet' : (labels[item.status] || item.status);
+        return `<button class="calendar-entry" ${item.postId ? `data-open-calendar="${esc(item.postId)}"` : `data-create-calendar="${esc(item.syncedTopicId)}"`}>
+          <i style="--profile-color:${esc(item.profileColor)}"></i>
+          <span><b>${esc(item.time)} · ${esc(item.profileName)}</b><strong>${esc(item.title)}</strong><small>${esc(statusText)}</small></span>
+          <em>${item.postId ? 'Mở bài' : '＋ Tạo bài'}</em>
+        </button>`;
+      }).join('');
+      $('#calendarDayDialog').showModal();
+      document.querySelectorAll('[data-open-calendar]').forEach(item => {
+        item.onclick = () => { $('#calendarDayDialog').close(); currentPostId = item.dataset.openCalendar; goto('studio'); };
+      });
+      document.querySelectorAll('[data-create-calendar]').forEach(item => {
+        item.onclick = async event => {
+          event.stopPropagation();
+          const button = event.currentTarget;
+          button.disabled = true;
+          const action = button.querySelector('em');
+          if (action) action.textContent = 'Đang tạo...';
+          try {
+            const result = await api('/api/automation/run', {
+              method: 'POST',
+              body: JSON.stringify({ topicIds: [button.dataset.createCalendar] })
+            });
+            const summary = result.summary || {};
+            if (!result.success) {
+              const detail = result.profiles?.flatMap(profile => profile.topics || []).find(topic => topic.error)?.error
+                || result.profiles?.find(profile => profile.error)?.error;
+              throw new Error(detail || `Tạo bài chưa hoàn tất (${summary.failed || 0} lỗi).`);
+            }
+            $('#calendarDayDialog').close();
+            toast('Đã tạo bài thành công.');
+            await renderCalendar();
+          } catch (error) {
+            toast(`Lỗi tạo bài: ${error.message}`, true);
+            button.disabled = false;
+            if (action) action.textContent = '＋ Tạo bài';
+          }
+        };
+      });
+    };
   });
+  $('#closeCalendarDay').onclick = () => $('#calendarDayDialog').close();
 }
 
 async function renderLogs() {
   let logs = [];
+  let pagination = { page: 1, total: 0, totalPages: 1 };
   try {
-    logs = await api('/api/audit-logs');
+    const result = await api(`/api/audit-logs?page=${logPage}&pageSize=20`);
+    logs = result.items || [];
+    pagination = result.pagination || pagination;
+    logPage = pagination.page;
   } catch {}
 
   $('#view').innerHTML = `
     <section class="panel">
-      <h2>Nhật ký kiểm toán hệ thống (Audit Events)</h2>
-      <p class="muted">Lưu vết bền vững mọi thao tác duyệt, xuất file và đánh dấu đăng bài.</p>
+      <div class="panelhead">
+        <div><h2>Nhật ký hệ thống</h2><p class="muted">Bao gồm hoạt động kiểm toán và log lỗi. Các lỗi mới nhất được tô đỏ và đưa lên đầu.</p></div>
+        <div class="toolbar">
+          <a class="button log-action" href="/api/audit-logs/export" download>Xuất CSV</a>
+          <button id="clearLogs" class="danger" ${pagination.total ? '' : 'disabled'}>Xóa log</button>
+          <button id="refreshLogs">Làm mới</button>
+        </div>
+      </div>
       ${logs.map(l => `
-        <div class="log">
+        <div class="log ${/(FAILED|ERROR)/i.test(l.action) ? 'error-log' : ''}">
           <time>${new Date(l.created_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}</time>
           <div>
             <strong>${esc(l.action)}</strong>
             <small>Actor: ${esc(l.actor_id)} · Entity: ${esc(l.entity_type)} (${esc(l.entity_id)})</small>
-            ${l.details_json ? `<small style="color:var(--muted)">${esc(l.details_json)}</small>` : ''}
+            ${l.details_json ? `<small class="log-details">${esc(l.details_json)}</small>` : ''}
           </div>
         </div>
       `).join('') || '<div class="empty">Chưa có nhật ký nào trong cơ sở dữ liệu.</div>'}
+      <div class="log-pagination">
+        <span>${pagination.total} bản ghi · Trang ${pagination.page}/${pagination.totalPages}</span>
+        <div>
+          <button id="prevLogPage" ${pagination.page <= 1 ? 'disabled' : ''}>‹ Trước</button>
+          <button id="nextLogPage" ${pagination.page >= pagination.totalPages ? 'disabled' : ''}>Sau ›</button>
+        </div>
+      </div>
     </section>
   `;
+  $('#refreshLogs').onclick = renderLogs;
+  $('#prevLogPage').onclick = () => { logPage = Math.max(1, logPage - 1); renderLogs(); };
+  $('#nextLogPage').onclick = () => { logPage = Math.min(pagination.totalPages, logPage + 1); renderLogs(); };
+  $('#clearLogs').onclick = async () => {
+    if (!confirm(`Xóa toàn bộ ${pagination.total} bản ghi nhật ký? Thao tác này không thể hoàn tác.`)) return;
+    try {
+      const result = await api('/api/audit-logs', { method: 'DELETE' });
+      logPage = 1;
+      toast(`Đã xóa ${result.deleted} bản ghi nhật ký.`);
+      renderLogs();
+    } catch (error) {
+      toast(`Lỗi xóa nhật ký: ${error.message}`, true);
+    }
+  };
 }
 
 async function renderSettings() {
@@ -1358,7 +1578,7 @@ async function renderSettings() {
         <div class="details">
           <span>Môi trường</span><b>${esc(serverStatus?.env || 'development')}</b>
           <span>Múi giờ</span><b>${esc(serverStatus?.timezone || 'Asia/Ho_Chi_Minh')}</b>
-          <span>Chế độ xuất</span><b>Chờ đăng thủ công (Manual Upload)</b>
+          <span>Chế độ vận hành</span><b>Theo từng Content Profile</b>
           <span>Cơ sở dữ liệu</span><b>SQLite bền vững (data/content_studio.sqlite)</b>
         </div>
       </section>
@@ -1375,7 +1595,8 @@ async function renderSettings() {
         <div id="appConfigFields"></div>
         <div style="display:flex;gap:10px;align-items:center;margin-top:18px">
           <button class="primary" type="submit">💾 Lưu cấu hình</button>
-          <small class="muted">Khởi động lại ứng dụng sau khi lưu để áp dụng đầy đủ.</small>
+          <button id="restartApp" type="button">↻ Khởi động lại ứng dụng</button>
+          <small class="muted">Khởi động lại để nạp API key, model và các thiết lập vừa lưu.</small>
         </div>
       </form>
     </section>
@@ -1458,6 +1679,24 @@ async function renderSettings() {
   };
 
   $('#refreshStatus').onclick = () => renderSettings();
+
+  $('#restartApp').onclick = async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Đang khởi động lại...';
+    try {
+      const result = await api('/api/app/restart', { method: 'POST' });
+      if (!result.restartSupported) {
+        location.reload();
+        return;
+      }
+      toast('Ứng dụng đang khởi động lại để áp dụng cấu hình...');
+    } catch (error) {
+      toast(`Không thể khởi động lại ứng dụng: ${error.message}`, true);
+      button.disabled = false;
+      button.textContent = '↻ Khởi động lại ứng dụng';
+    }
+  };
 
   const connectGoogleBtn = $('#connectGoogleBtn');
   if (connectGoogleBtn) {

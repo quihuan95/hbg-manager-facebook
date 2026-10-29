@@ -68,6 +68,11 @@ export function initDb() {
       sheet_id_topics TEXT,
       page_name TEXT,
       facebook_page_id TEXT,
+      color TEXT NOT NULL DEFAULT '#4970d5',
+      workflow_mode TEXT NOT NULL DEFAULT 'manual',
+      retain_removed_posts INTEGER NOT NULL DEFAULT 1,
+      logo_data TEXT,
+      logo_mime TEXT,
       time TEXT NOT NULL DEFAULT '09:00',
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
@@ -103,7 +108,8 @@ export function initDb() {
       language TEXT DEFAULT 'vi',
       cta TEXT,
       required_text TEXT,
-      status TEXT NOT NULL DEFAULT 'READY', -- READY, HOLD, DISABLED
+      image_rule TEXT,
+      status TEXT NOT NULL DEFAULT 'READY', -- Rows present in Sheet are confirmed.
       source_hash TEXT NOT NULL,
       source_revision INTEGER NOT NULL DEFAULT 1,
       imported_at TEXT NOT NULL,
@@ -118,6 +124,7 @@ export function initDb() {
       content_date TEXT NOT NULL,
       scheduled_time TEXT NOT NULL DEFAULT '09:00',
       current_revision_id TEXT,
+      creation_source TEXT NOT NULL DEFAULT 'manual',
       status TEXT NOT NULL DEFAULT 'DRAFT', -- DRAFT, GENERATING, NEEDS_REVIEW, APPROVED, READY_FOR_MANUAL_UPLOAD, MANUALLY_UPLOADED, ARCHIVED
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -217,6 +224,31 @@ export function initDb() {
   if (!profileColumns.some(column => column.name === 'facebook_page_id')) {
     db.exec('ALTER TABLE profiles ADD COLUMN facebook_page_id TEXT');
   }
+  if (!profileColumns.some(column => column.name === 'color')) {
+    db.exec("ALTER TABLE profiles ADD COLUMN color TEXT NOT NULL DEFAULT '#4970d5'");
+    const palette = ['#4970d5', '#0f8b8d', '#e07a2d', '#9b5de5', '#d1495b', '#2a9d5b', '#c49000', '#52796f'];
+    db.prepare('SELECT id FROM profiles ORDER BY created_at, id').all().forEach((profile, index) => {
+      db.prepare('UPDATE profiles SET color = ? WHERE id = ?').run(palette[index % palette.length], profile.id);
+    });
+  }
+  if (!profileColumns.some(column => column.name === 'workflow_mode')) {
+    db.exec("ALTER TABLE profiles ADD COLUMN workflow_mode TEXT NOT NULL DEFAULT 'manual'");
+  }
+  if (!profileColumns.some(column => column.name === 'retain_removed_posts')) {
+    db.exec('ALTER TABLE profiles ADD COLUMN retain_removed_posts INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!profileColumns.some(column => column.name === 'logo_data')) db.exec('ALTER TABLE profiles ADD COLUMN logo_data TEXT');
+  if (!profileColumns.some(column => column.name === 'logo_mime')) db.exec('ALTER TABLE profiles ADD COLUMN logo_mime TEXT');
+  const topicColumns = db.prepare('PRAGMA table_info(topics)').all();
+  if (!topicColumns.some(column => column.name === 'image_rule')) {
+    db.exec('ALTER TABLE topics ADD COLUMN image_rule TEXT');
+  }
+  const postColumns = db.prepare('PRAGMA table_info(posts)').all();
+  if (!postColumns.some(column => column.name === 'creation_source')) {
+    db.exec("ALTER TABLE posts ADD COLUMN creation_source TEXT NOT NULL DEFAULT 'manual'");
+  }
+  // A row present in CONTENT_PLAN is considered confirmed; legacy HOLD/DISABLED values no longer gate processing.
+  db.prepare("UPDATE topics SET status = 'READY' WHERE status <> 'READY'").run();
   const manualUploadColumns = db.prepare('PRAGMA table_info(manual_uploads)').all();
   if (!manualUploadColumns.some(column => column.name === 'target_page')) {
     db.exec('ALTER TABLE manual_uploads ADD COLUMN target_page TEXT');
