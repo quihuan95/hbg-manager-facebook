@@ -66,6 +66,26 @@ const iconObserver = new MutationObserver(mutations => {
 });
 iconObserver.observe(document.body, { childList: true, subtree: true });
 
+let simplebarRefreshFrame = 0;
+function refreshSimplebars() {
+  if (!window.SimpleBar) return;
+  cancelAnimationFrame(simplebarRefreshFrame);
+  simplebarRefreshFrame = requestAnimationFrame(() => {
+    document.querySelectorAll('[data-simplebar]').forEach(element => {
+      const instance = window.SimpleBar.instances?.get(element)
+        || new window.SimpleBar(element, { autoHide: false });
+      instance.recalculate();
+    });
+  });
+}
+
+const simplebarObserver = new MutationObserver(refreshSimplebars);
+['#view', '#nav', '#modalBody'].forEach(selector => {
+  const element = $(selector);
+  if (element) simplebarObserver.observe(element, { childList: true, subtree: true });
+});
+refreshSimplebars();
+
 function toast(t, isError = false) {
   const el = $('#toast');
   if (!el) return;
@@ -107,7 +127,7 @@ function goto(r) {
 }
 
 function getRoute() {
-  const route = location.hash.slice(1) || 'create_posts';
+  const route = location.hash.slice(1) || 'publishing';
   return route === 'queue' ? 'create_posts' : route;
 }
 
@@ -178,7 +198,7 @@ async function render() {
   if ($('#appVersion')) $('#appVersion').textContent = `v${serverStatus?.appVersion || '...'}`;
   if (!routes[r] && r !== 'studio') r = 'create_posts';
   $('#title').textContent = r === 'studio' ? 'AI Content Studio' : routes[r][1];
-  const postRoutes = ['create_posts', 'created_posts', 'publishing'];
+  const postRoutes = ['publishing', 'create_posts', 'created_posts'];
   const otherRoutes = Object.entries(routes).filter(([key]) => !postRoutes.includes(key));
   $('#nav').innerHTML = `
     <div class="nav-group ${postRoutes.includes(r) || r === 'studio' ? 'open' : ''}">
@@ -205,6 +225,7 @@ async function render() {
     await views[r]();
   }
   renderIcons();
+  refreshSimplebars();
 }
 
 async function renderQueue() {
@@ -264,7 +285,7 @@ async function renderQueue() {
           <button id="syncAllFromCreate">${icon('refresh-cw')}Đồng bộ tất cả Sheet</button>
         </div>
       </div>
-      <div class="tablewrap">
+      <div class="tablewrap" data-simplebar data-simplebar-auto-hide="false">
         <table class="queue-table topic-queue-table">
           <thead><tr><th><input type="checkbox" id="selectAllTopics" aria-label="Chọn tất cả lịch có thể tạo"></th><th>CHỦ ĐỀ TỪ SHEET</th><th>PROFILE</th><th>LỊCH ĐĂNG</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead>
           <tbody>
@@ -310,7 +331,7 @@ async function renderQueue() {
           </select>
         </div>
       </div>
-      <div class="tablewrap">
+      <div class="tablewrap" data-simplebar data-simplebar-auto-hide="false">
         <table class="queue-table post-queue-table">
           <thead>
             <tr>
@@ -587,6 +608,7 @@ function modal(title, body, fn) {
   };
   $('#modal').showModal();
   renderIcons();
+  refreshSimplebars();
 }
 
 async function newJob() {
@@ -1507,14 +1529,14 @@ async function renderCalendar() {
         <b>Chú giải:</b>
         ${cachedProfiles.map(p => `<span><i style="--profile-color:${esc(p.color || '#4970d5')}"></i>${esc(p.name)}</span>`).join('')}
       </div>
-      <div class="tablewrap"><div class="calendar">
+      <div class="tablewrap" data-simplebar data-simplebar-auto-hide="false"><div class="calendar">
         ${['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(d => `<div class="calheading">${d}</div>`).join('')}
         ${'<div class="day"></div>'.repeat(firstDayOffset)}${days.join('')}
       </div></div>
     </section>
     <dialog id="calendarDayDialog" class="calendar-dialog">
       <div class="modalhead"><h2 id="calendarDayTitle"></h2><button type="button" id="closeCalendarDay" aria-label="Đóng">×</button></div>
-      <div id="calendarDayBody"></div>
+      <div id="calendarDayBody" data-simplebar data-simplebar-auto-hide="false"></div>
     </dialog>
     ${undated.length ? `<section class="panel"><h2>Lịch chưa có ngày</h2>${undated.map(item => `<div class="check"><span>${esc(item.title)}<small>${esc(item.profileName)}</small></span><b>${esc(item.status)}</b></div>`).join('')}</section>` : ''}
   `;

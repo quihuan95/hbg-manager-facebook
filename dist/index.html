@@ -5,15 +5,18 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>The HBG • Content Studio</title>
+  <link rel="stylesheet" href="vendor/simplebar.min.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
   <aside>
-    <a class="brand" href="#create_posts" aria-label="The HBG Content Studio">
+    <a class="brand" href="#publishing" aria-label="The HBG Content Studio">
       <img src="assets/the-hbg-logo.png" alt="The HBG" />
     </a>
-    <nav id="nav"></nav>
+    <div class="nav-scroll" data-simplebar data-simplebar-auto-hide="false">
+      <nav id="nav"></nav>
+    </div>
     <div class="sidefoot">
       <span class="avatar">M</span>
       <div>Minh Phạm<small>Workspace quản trị</small></div>
@@ -22,15 +25,21 @@
   <main>
     <header>
       <div>
-        <span class="eyebrow">CONTENT OPERATIONS</span>
         <h1 id="title">Tạo bài</h1>
+        <div class="header-meta">
+          <span>THE HBG CONTENT STUDIO</span>
+          <i aria-hidden="true"></i>
+          <span id="appVersion">v...</span>
+          <i aria-hidden="true"></i>
+          <span>Asia/Ho_Chi_Minh</span>
+          <i aria-hidden="true"></i>
+          <span>Phase 1</span>
+        </div>
       </div>
     </header>
-    <div id="view"></div>
-    <footer>
-      <span>THE HBG CONTENT STUDIO · <span id="appVersion">v...</span></span>
-      <span>Asia/Ho_Chi_Minh · Phase 1</span>
-    </footer>
+    <div id="viewScroll" data-simplebar data-simplebar-auto-hide="false">
+      <div id="view"></div>
+    </div>
   </main>
   <dialog id="modal">
     <form id="modalForm">
@@ -38,7 +47,9 @@
         <h2 id="modalTitle"></h2>
         <button type="button" id="closeModal" class="icon-button" aria-label="Đóng"><i data-lucide="x"></i></button>
       </div>
-      <div id="modalBody"></div>
+      <div id="modalScroll" data-simplebar data-simplebar-auto-hide="false">
+        <div id="modalBody"></div>
+      </div>
       <div class="modalfoot">
         <button type="button" id="cancelModal">Hủy</button><button class="primary" type="submit"><i data-lucide="save"></i>Lưu</button>
       </div>
@@ -46,6 +57,7 @@
   </dialog>
   <div id="toast" role="status"></div>
   <script src="vendor/lucide.min.js"></script>
+  <script src="vendor/simplebar.min.js"></script>
   <script src="app.js"></script>
 </body>
 
