@@ -55,8 +55,8 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
-    minWidth: 1100,
-    minHeight: 700,
+    minWidth: 820,
+    minHeight: 620,
     show: false,
     frame: false,
     autoHideMenuBar: true,
