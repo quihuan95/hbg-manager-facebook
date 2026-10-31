@@ -260,6 +260,17 @@ export function initDb() {
   if (!revisionColumns.some(column => column.name === 'image_set_json')) {
     db.exec('ALTER TABLE post_revisions ADD COLUMN image_set_json TEXT');
   }
+  // These lookups run every time the editor opens. Explicit indexes avoid full
+  // table scans once revision and audit history grows.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_post_revisions_post_id ON post_revisions(post_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_entity_action_created ON audit_events(entity_id, action, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_topics_profile_topic ON topics(profile_id, topic_id);
+    CREATE INDEX IF NOT EXISTS idx_posts_status_date ON posts(status, content_date DESC, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_posts_profile_date ON posts(profile_id, content_date DESC, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_topics_date_time ON topics(content_date, publish_time, topic_id);
+    CREATE INDEX IF NOT EXISTS idx_operations_post_stage ON operations(post_id, stage);
+  `);
   // A row present in CONTENT_PLAN is considered confirmed; legacy HOLD/DISABLED values no longer gate processing.
   db.prepare("UPDATE topics SET status = 'READY' WHERE status <> 'READY'").run();
   const manualUploadColumns = db.prepare('PRAGMA table_info(manual_uploads)').all();

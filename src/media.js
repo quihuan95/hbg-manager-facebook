@@ -63,14 +63,29 @@ export function mediaMime(value, fallback = 'image/png') {
 }
 
 export function migrateBase64Media(db) {
-  const revisions = db.prepare("SELECT id, image_data FROM post_revisions WHERE image_data LIKE 'data:image/%;base64,%'").all();
+  const revisions = db.prepare("SELECT id, image_data, image_set_json FROM post_revisions WHERE image_data LIKE 'data:image/%;base64,%' OR image_set_json LIKE '%data:image/%;base64,%'").all();
   const profiles = db.prepare("SELECT id, logo_data FROM profiles WHERE logo_data LIKE 'data:image/%;base64,%'").all();
   if (!revisions.length && !profiles.length) return { revisions: 0, profiles: 0 };
 
   db.exec('BEGIN IMMEDIATE');
   try {
-    const updateRevision = db.prepare('UPDATE post_revisions SET image_data = ? WHERE id = ?');
-    for (const row of revisions) updateRevision.run(storeMediaValue(row.image_data, 'images'), row.id);
+    const updateRevision = db.prepare('UPDATE post_revisions SET image_data = ?, image_set_json = ? WHERE id = ?');
+    for (const row of revisions) {
+      let imageSet = null;
+      try {
+        const parsed = JSON.parse(row.image_set_json || 'null');
+        if (Array.isArray(parsed)) {
+          imageSet = JSON.stringify(parsed.map(item => ({
+            ...item,
+            data: storeMediaValue(item?.data, 'images')
+          })).filter(item => item.data));
+        }
+      } catch {
+        // Keep malformed legacy JSON untouched so startup migration never loses data.
+        imageSet = row.image_set_json;
+      }
+      updateRevision.run(storeMediaValue(row.image_data, 'images'), imageSet, row.id);
+    }
     const updateProfile = db.prepare('UPDATE profiles SET logo_data = ? WHERE id = ?');
     for (const row of profiles) updateProfile.run(storeMediaValue(row.logo_data, 'logos'), row.id);
     db.exec('COMMIT');
@@ -79,7 +94,8 @@ export function migrateBase64Media(db) {
     throw error;
   }
 
-  db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-  db.exec('VACUUM');
+  // Avoid a blocking full-database rewrite during application startup.
+  // SQLite will reuse the pages released by the migration.
+  db.exec('PRAGMA wal_checkpoint(PASSIVE)');
   return { revisions: revisions.length, profiles: profiles.length };
 }

@@ -8,7 +8,8 @@ import { storeMediaValue } from '../media.js';
 export function getAllPosts(filterStatus = null, filterProfile = null) {
   let query = `
     SELECT p.*, prof.name as profile_name, prof.type as profile_type, prof.page_name, prof.facebook_page_id,
-           r.topic_title, r.caption, r.headline, r.cta, r.image_data, r.image_mime, r.revision_number, r.revision_hash, r.validation_findings_json,
+           r.topic_title, r.caption, r.headline, r.cta, r.image_mime, r.revision_number, r.revision_hash, r.validation_findings_json,
+           CASE WHEN r.image_data IS NOT NULL AND r.image_data <> '' THEN 1 ELSE 0 END AS has_image,
            app.approved_at, app.approver_id,
            exp.status as export_status, exp.drive_folder_id,
            mu.uploaded_at as manually_uploaded_at, mu.post_url as manual_post_url, mu.target_page as manual_target_page

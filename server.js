@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import sharp from 'sharp';
 
 import { config } from './src/config.js';
 import { initDb, db } from './src/db.js';
@@ -120,13 +121,21 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const stat = fs.statSync(mediaPath);
+    const isPreview = parsedUrl.searchParams.get('preview') === '1';
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[path.extname(mediaPath).toLowerCase()] || 'application/octet-stream',
-      'Content-Length': stat.size,
+      ...(isPreview ? {} : { 'Content-Length': stat.size }),
       'Cache-Control': 'public, max-age=31536000, immutable'
     });
     if (req.method === 'HEAD') res.end();
-    else fs.createReadStream(mediaPath).pipe(res);
+    else if (isPreview) {
+      // The editor does not need a multi-megapixel source image. Decode a
+      // bounded preview to keep Chromium's memory and paint cost low.
+      fs.createReadStream(mediaPath)
+        .pipe(sharp().resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true }))
+        .on('error', () => res.destroy())
+        .pipe(res);
+    } else fs.createReadStream(mediaPath).pipe(res);
     return;
   }
 
@@ -760,7 +769,8 @@ server.listen(config.port, '127.0.0.1', () => {
       });
     };
 
-    setTimeout(runScheduledAutomation, 10_000).unref();
+    const firstAutomationDelay = Math.min(60_000, config.automation.intervalMinutes * 60_000);
+    setTimeout(runScheduledAutomation, firstAutomationDelay).unref();
     setInterval(runScheduledAutomation, config.automation.intervalMinutes * 60_000).unref();
     console.log(`⚡ Automation: ON · every ${config.automation.intervalMinutes} minutes`);
   }

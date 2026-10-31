@@ -1,6 +1,10 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const previewImageSrc = value => {
+  const source = String(value || '');
+  return source.startsWith('/media/') ? `${source}?preview=1` : source;
+};
 
 function initializeWindowControls() {
   const controls = window.hbgWindowControls;
@@ -70,6 +74,9 @@ let studioReturnRoute = 'created_posts';
 let calendarMonth = new Date().toISOString().slice(0, 7);
 let logPage = 1;
 let notificationCursor = new Date().toISOString();
+const getCache = new Map();
+const GET_CACHE_TTL_MS = 3000;
+let searchRenderTimer = 0;
 
 function renderIcons() {
   if (!window.lucide) return;
@@ -144,8 +151,9 @@ function setPublishLoading(loading, idleText = 'Đăng bài') {
 }
 
 function goto(r) {
-  location.hash = r;
-  render();
+  const nextHash = `#${r}`;
+  if (location.hash === nextHash) render();
+  else location.hash = nextHash;
 }
 
 function getRoute() {
@@ -187,15 +195,32 @@ async function copyJson(value, successMessage) {
 
 // API Fetch Helpers
 async function api(url, options = {}) {
-  const res = await fetch(url, {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method === 'GET') {
+    const now = Date.now();
+    for (const [key, entry] of getCache) {
+      if (now - entry.createdAt >= GET_CACHE_TTL_MS) getCache.delete(key);
+    }
+    const cached = getCache.get(url);
+    if (cached) return cached.promise;
+  } else {
+    getCache.clear();
+  }
+
+  const request = fetch(url, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options
+  }).then(async res => {
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText || 'Lỗi kết nối máy chủ');
+    return data;
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.error || res.statusText || 'Lỗi kết nối máy chủ');
+
+  if (method === 'GET') {
+    getCache.set(url, { createdAt: Date.now(), promise: request });
+    request.catch(() => getCache.delete(url));
   }
-  return data;
+  return request;
 }
 
 async function fetchStatus() {
@@ -274,6 +299,11 @@ async function renderQueue() {
     (!filter || j.status === filter) &&
     (!query || `${j.topic_title} ${j.profile_name || ''}`.toLowerCase().includes(query.toLowerCase()))
   );
+  // Keep DOM size bounded. Search/filter still runs against the complete data
+  // set, so older records remain immediately discoverable.
+  const maxRenderedRows = 300;
+  const visibleTopics = syncedTopics.slice(0, maxRenderedRows);
+  const visibleJobs = jobs.slice(0, maxRenderedRows);
 
   const readyCount = cachedPosts.filter(j => j.status === 'READY_FOR_MANUAL_UPLOAD').length;
   const approvedCount = cachedPosts.filter(j => j.status === 'APPROVED').length;
@@ -311,7 +341,7 @@ async function renderQueue() {
         <table class="queue-table topic-queue-table">
           <thead><tr><th><input type="checkbox" id="selectAllTopics" aria-label="Chọn tất cả lịch có thể tạo"></th><th>CHỦ ĐỀ TỪ SHEET</th><th>PROFILE</th><th>LỊCH ĐĂNG</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead>
           <tbody>
-            ${syncedTopics.map(t => {
+            ${visibleTopics.map(t => {
               const finished = ['READY_FOR_MANUAL_UPLOAD', 'MANUALLY_UPLOADED'].includes(t.post_status);
               const hasSchedule = /^\d{4}-\d{2}-\d{2}$/.test(t.content_date || '') && Boolean(t.publish_time);
               const canGenerate = hasSchedule && !finished;
@@ -366,7 +396,7 @@ async function renderQueue() {
             </tr>
           </thead>
           <tbody>
-            ${jobs.map(j => {
+            ${visibleJobs.map(j => {
               const p = cachedProfiles.find(x => x.id === j.profile_id);
               return `
                 <tr>
@@ -411,9 +441,13 @@ async function renderQueue() {
   $('#search').oninput = e => {
     query = e.target.value;
     const pos = e.target.selectionStart;
-    renderQueue();
-    $('#search').focus();
-    $('#search').setSelectionRange(pos, pos);
+    clearTimeout(searchRenderTimer);
+    searchRenderTimer = setTimeout(async () => {
+      if (!['create_posts', 'created_posts', 'publishing'].includes(getRoute())) return;
+      await renderQueue();
+      $('#search')?.focus();
+      $('#search')?.setSelectionRange(pos, pos);
+    }, 150);
   };
 
   $('#selectAllTopics').onchange = e => {
@@ -864,7 +898,7 @@ async function renderStudio() {
               <div class="image-edit-card">
                 <div class="image-edit-preview">
                   <div class="sectionlabel">ẢNH ${index + 1}/${studioImages.length}</div>
-                  <img class="previewimg" src="${esc(item.data)}" alt="Ảnh bài viết ${index + 1}">
+                  <img class="previewimg" src="${esc(previewImageSrc(item.data))}" alt="Ảnh bài viết ${index + 1}" loading="lazy" decoding="async" fetchpriority="low">
                 </div>
                 <div class="image-edit-controls">
                   <label>Prompt chỉnh sửa ảnh ${index + 1}
@@ -2015,4 +2049,6 @@ async function renderSettings() {
 $('#closeModal').onclick = $('#cancelModal').onclick = () => $('#modal').close();
 window.addEventListener('hashchange', render);
 render();
-setInterval(pollGlobalNotifications, 5000);
+setInterval(() => {
+  if (!document.hidden) pollGlobalNotifications();
+}, 15000);
