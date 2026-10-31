@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
-import { getPostById, updatePostStatus } from '../models/post.js';
+import { getPostById } from '../models/post.js';
 import { resolveFolder, createFolder, uploadFileToDrive } from './drive.js';
 import { sha256 } from '../crypto.js';
 import { readMediaBuffer } from '../media.js';
@@ -21,7 +21,13 @@ function driveDateFolderName(contentDate) {
   return match ? `${match[3]}-${match[2]}-${match[1]}` : driveFolderName(contentDate || 'Chưa xác định ngày');
 }
 
-export async function exportPostToDrive(postId) {
+const activeExportPostIds = new Set();
+
+export function isPostExporting(postId) {
+  return activeExportPostIds.has(postId);
+}
+
+async function performPostExport(postId) {
   const post = getPostById(postId);
   if (!post) throw new Error('Không tìm thấy bài viết để xuất file.');
 
@@ -120,34 +126,52 @@ export async function exportPostToDrive(postId) {
 
   const reviewUpload = await uploadFileToDrive(revFolder.id, 'REVIEW.md', 'text/markdown; charset=utf-8', Buffer.from(reviewMd, 'utf8'));
 
-  // Upsert export record
+  // Persist the local export result atomically. Google uploads above can take
+  // several minutes, during which a profile sync or manual edit may remove the
+  // post or advance its revision. Revalidate the parents while holding the
+  // SQLite write lock so a generic FOREIGN KEY failure cannot occur midway.
   const exportId = `exp_${crypto.randomUUID().slice(0, 10)}`;
-  db.prepare('DELETE FROM exports WHERE post_id = ? AND revision_id = ?').run(post.id, rev.id);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const current = db.prepare('SELECT current_revision_id FROM posts WHERE id = ?').get(post.id);
+    if (!current) {
+      throw new Error(`EXPORT_PARENT_MISSING: Bài viết ${post.id} đã bị xóa trong lúc tải file lên Drive.`);
+    }
+    const revisionExists = db.prepare('SELECT 1 AS ok FROM post_revisions WHERE id = ? AND post_id = ?').get(rev.id, post.id);
+    if (!revisionExists) {
+      throw new Error(`EXPORT_REVISION_MISSING: Revision ${rev.id} không còn tồn tại.`);
+    }
+    if (current.current_revision_id !== rev.id) {
+      throw new Error('EXPORT_REVISION_CONFLICT: Bài viết đã có revision mới trong lúc tải file lên Drive. Hãy xuất lại revision mới nhất.');
+    }
 
-  db.prepare(`
-    INSERT INTO exports (id, post_id, revision_id, revision_hash, drive_folder_id, drive_caption_file_id, drive_image_file_id, drive_manifest_file_id, drive_review_file_id, status, exported_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'EXPORTED', ?)
-  `).run(
-    exportId,
-    post.id,
-    rev.id,
-    rev.revision_hash,
-    revFolder.id,
-    captionUpload.id,
-    imageUpload?.id || null,
-    manifestUpload.id,
-    reviewUpload.id,
-    now
-  );
-
-  // Transition post state to READY_FOR_MANUAL_UPLOAD
-  updatePostStatus(post.id, 'READY_FOR_MANUAL_UPLOAD');
-
-  // Audit event
-  db.prepare(`
-    INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, revision_id, details_json, created_at)
-    VALUES (?, ?, 'EXPORT_TO_DRIVE', 'post', ?, ?, ?, ?)
-  `).run(`audit_${Date.now()}`, 'u_admin', post.id, rev.id, JSON.stringify({ drive_folder_id: revFolder.id }), now);
+    db.prepare('DELETE FROM exports WHERE post_id = ? AND revision_id = ?').run(post.id, rev.id);
+    db.prepare(`
+      INSERT INTO exports (id, post_id, revision_id, revision_hash, drive_folder_id, drive_caption_file_id, drive_image_file_id, drive_manifest_file_id, drive_review_file_id, status, exported_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'EXPORTED', ?)
+    `).run(
+      exportId,
+      post.id,
+      rev.id,
+      rev.revision_hash,
+      revFolder.id,
+      captionUpload.id,
+      imageUpload?.id || null,
+      manifestUpload.id,
+      reviewUpload.id,
+      now
+    );
+    db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?')
+      .run('READY_FOR_MANUAL_UPLOAD', now, post.id);
+    db.prepare(`
+      INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, revision_id, details_json, created_at)
+      VALUES (?, ?, 'EXPORT_TO_DRIVE', 'post', ?, ?, ?, ?)
+    `).run(`audit_${crypto.randomUUID().slice(0, 12)}`, 'u_admin', post.id, rev.id, JSON.stringify({ drive_folder_id: revFolder.id }), now);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 
   return {
     success: true,
@@ -161,4 +185,16 @@ export async function exportPostToDrive(postId) {
       review: reviewUpload.id
     }
   };
+}
+
+export async function exportPostToDrive(postId) {
+  if (activeExportPostIds.has(postId)) {
+    throw new Error('EXPORT_IN_PROGRESS: Bài viết đang được xuất lên Google Drive. Vui lòng chờ hoàn tất.');
+  }
+  activeExportPostIds.add(postId);
+  try {
+    return await performPostExport(postId);
+  } finally {
+    activeExportPostIds.delete(postId);
+  }
 }

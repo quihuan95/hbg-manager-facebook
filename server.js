@@ -16,7 +16,7 @@ import { getAllPosts, getPostById, createPostFromTopic, createNewRevision, updat
 import { generateCaption } from './src/ai/caption.js';
 import { generateImage, planImageBriefs } from './src/ai/image.js';
 import { approvePost, requestChanges } from './src/review/approval.js';
-import { exportPostToDrive } from './src/google/export.js';
+import { exportPostToDrive, isPostExporting } from './src/google/export.js';
 import { markManuallyUploaded, markManyManuallyUploaded } from './src/manual_upload.js';
 import { runContentAutomation, syncRulesFromDrive } from './src/automation.js';
 import { testMetaConnection, publishPostToFacebook } from './src/meta.js';
@@ -467,6 +467,9 @@ const server = http.createServer(async (req, res) => {
       }
       if (pathname.match(/^\/api\/posts\/([^/]+)$/) && req.method === 'DELETE') {
         const postId = pathname.split('/')[3];
+        if (isPostExporting(postId)) {
+          return sendJson(res, 409, { error: 'Bài viết đang được xuất lên Google Drive, chưa thể xóa. Vui lòng thử lại sau khi export hoàn tất.' });
+        }
         return sendJson(res, 200, deletePost(postId));
       }
 
