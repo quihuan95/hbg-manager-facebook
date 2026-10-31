@@ -769,6 +769,108 @@ button.publish-loading {
   background: #f4f6fa;
   border-radius: 8px;
 }
+.image-edit-list {
+  display: grid;
+  gap: 16px;
+}
+.image-edit-card {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 18px;
+  align-items: stretch;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.image-edit-preview,
+.image-edit-controls {
+  min-width: 0;
+}
+.image-edit-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.image-edit-preview > .sectionlabel {
+  min-height: 18px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+.image-edit-preview .previewimg {
+  height: 100%;
+  min-height: 320px;
+  max-height: 520px;
+}
+.image-edit-controls {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 0;
+}
+.image-edit-controls label:not(.image-edit-action) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+  line-height: 18px;
+}
+.image-edit-controls textarea {
+  flex: 1;
+  margin-top: 8px;
+  min-height: 210px;
+  resize: vertical;
+}
+.image-edit-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.image-edit-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 42px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #d8deea;
+  border-radius: 9px;
+  background: #fff;
+  color: #34425c;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  flex-direction: row;
+  white-space: nowrap;
+  transition: border-color .16s ease, background .16s ease, color .16s ease, box-shadow .16s ease;
+}
+.image-edit-action svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+.image-edit-action:hover {
+  border-color: #9aace0;
+  background: #f5f7ff;
+  color: #3153a5;
+  box-shadow: 0 2px 8px rgba(40, 70, 140, .08);
+}
+.image-edit-action:focus-within,
+.image-edit-action:focus-visible {
+  outline: 2px solid rgba(79, 70, 229, .22);
+  outline-offset: 2px;
+}
+.image-edit-action:disabled {
+  opacity: .6;
+  cursor: wait;
+}
 .check {
   padding: 12px 0;
   border-bottom: 1px solid var(--line);
@@ -1586,6 +1688,21 @@ dialog::backdrop {
   .header-actions button {
     font-size: 12px;
     padding: 9px;
+  }
+}
+@media (max-width: 850px) {
+  .image-edit-card {
+    grid-template-columns: 1fr;
+  }
+  .image-edit-preview .previewimg {
+    height: auto;
+    min-height: 0;
+  }
+  .image-edit-controls textarea {
+    min-height: 120px;
+  }
+  .image-edit-controls {
+    padding-top: 0;
   }
 }
 

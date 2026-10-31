@@ -782,6 +782,9 @@ async function renderStudio() {
   const isReadyForManual = (post.status === 'READY_FOR_MANUAL_UPLOAD');
   const isUploaded = (post.status === 'MANUALLY_UPLOADED');
   const canPublish = post.status === 'APPROVED' || isReadyForManual;
+  let studioImages = [];
+  try { studioImages = JSON.parse(post.image_set_json || '[]'); } catch {}
+  if (!studioImages.length && post.image_data) studioImages = [{ data: post.image_data, mime: post.image_mime || 'image/png', brief: post.image_brief || '' }];
 
   $('#view').innerHTML = `
     <button class="back" id="back">‹ Quay lại Tạo bài</button>
@@ -857,7 +860,22 @@ async function renderStudio() {
           <h2>Hình ảnh bài viết</h2>
           <div class="sectionlabel">BẢN XEM TRƯỚC (FINAL PREVIEW)</div>
           ${post.image_data ? `
-            <img class="previewimg" src="${esc(post.image_data)}" alt="Ảnh bài viết">
+            <div class="image-edit-list">${studioImages.map((item, index) => `
+              <div class="image-edit-card">
+                <div class="image-edit-preview">
+                  <div class="sectionlabel">ẢNH ${index + 1}/${studioImages.length}</div>
+                  <img class="previewimg" src="${esc(item.data)}" alt="Ảnh bài viết ${index + 1}">
+                </div>
+                <div class="image-edit-controls">
+                  <label>Prompt chỉnh sửa ảnh ${index + 1}
+                    <textarea class="single-image-brief" data-image-index="${index}" rows="7">${esc(item.brief || '')}</textarea>
+                  </label>
+                  <div class="image-edit-actions">
+                    <button class="image-edit-action regenerate-single-image" data-image-index="${index}">${icon('refresh-cw')}<span>Tạo lại ảnh này</span></button>
+                    <label class="image-edit-action image-upload-action">${icon('upload')}<span>Thay ảnh từ máy</span><input class="replace-single-image" data-image-index="${index}" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+                  </div>
+                </div>
+              </div>`).join('')}</div>
           ` : `
             <div class="placeholder">
               <strong>Chưa có hình ảnh</strong>
@@ -976,7 +994,7 @@ async function renderStudio() {
         method: 'POST',
         body: JSON.stringify({ imageBrief: $('#imagePrompt').value.trim() })
       });
-      toast('Đã tạo ảnh mới bằng AI thành công!');
+      toast('Đã tạo và lồng khung cho toàn bộ bộ ảnh!');
       renderStudio();
     } catch (err) {
       toast(`Lỗi tạo ảnh: ${err.message}`, true);
@@ -984,6 +1002,47 @@ async function renderStudio() {
       btn.innerHTML = `${icon('image-plus')}Sinh ảnh bằng AI`;
     }
   };
+
+  document.querySelectorAll('.regenerate-single-image').forEach(button => {
+    button.onclick = async () => {
+      const index = Number(button.dataset.imageIndex);
+      const brief = document.querySelector(`.single-image-brief[data-image-index="${index}"]`).value.trim();
+      button.disabled = true;
+      button.textContent = `Đang tạo lại ảnh ${index + 1}...`;
+      try {
+        await api(`/api/posts/${post.id}/generate-image/${index}`, { method: 'POST', body: JSON.stringify({ imageBrief: brief, expectedRevisionId: post.revision_id }) });
+        toast(`Đã tạo lại và lồng khung ảnh ${index + 1}!`);
+        renderStudio();
+      } catch (err) {
+        toast(`Lỗi tạo lại ảnh ${index + 1}: ${err.message}`, true);
+        button.disabled = false;
+        button.innerHTML = `${icon('refresh-cw')}Tạo lại ảnh này`;
+      }
+    };
+  });
+
+  document.querySelectorAll('.replace-single-image').forEach(input => {
+    input.onchange = () => {
+      const file = input.files[0];
+      const index = Number(input.dataset.imageIndex);
+      if (!file) return;
+      if (file.size > 15 * 1024 * 1024) return toast('File ảnh không được vượt quá 15 MB', true);
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          await api(`/api/posts/${post.id}/replace-image/${index}`, {
+            method: 'POST',
+            body: JSON.stringify({ imageData: reader.result, imageMime: file.type, expectedRevisionId: post.revision_id })
+          });
+          toast(`Đã thay và lồng khung ảnh ${index + 1}!`);
+          renderStudio();
+        } catch (err) {
+          toast(`Lỗi thay ảnh ${index + 1}: ${err.message}`, true);
+        }
+      };
+      reader.readAsDataURL(file);
+    };
+  });
 
   // Save manual edits
   $('#saveCaption').onclick = async () => {
@@ -1358,7 +1417,7 @@ function editProfile(p) {
         ${googleSheetUrl(p?.sheet_id_topics) ? `<a class="button" href="${esc(googleSheetUrl(p.sheet_id_topics))}" target="_blank" rel="noopener noreferrer">Mở Sheet ↗</a>` : ''}
       </div>
     </label>
-    <p class="muted">Tab TOPICS cần 4 cột: <b>topic_id</b>, <b>content_date</b>, <b>publish_time</b>, <b>topic_title</b>. Có thể thêm <b>image_rule</b>; để trống sẽ dùng Rule ảnh mặc định của Profile.</p>
+    <p class="muted">Tab TOPICS cần 4 cột: <b>topic_id</b>, <b>content_date</b>, <b>publish_time</b>, <b>topic_title</b>. Có thể thêm <b>image_rule</b>, <b>source_image_drive_link</b> (link nguồn ảnh) và <b>image_frame_drive_link</b> (link khung ảnh). Nguồn ảnh để trống sẽ tạo ảnh mới theo nội dung; khung để trống sẽ không lắp khung.</p>
     <div class="formrow">
       <label>Tên Facebook Page<input name="page_name" value="${esc(p?.page_name || '')}" placeholder="Ví dụ: Danang Events"></label>
       <label>Facebook Page ID hoặc link

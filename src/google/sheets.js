@@ -33,7 +33,7 @@ export async function syncTopicsFromSheet(profileId, spreadsheetId) {
   const token = await getValidAccessToken();
   if (!token) throw new Error('Chưa kết nối Google Drive/Sheets.');
 
-  const range = 'TOPICS!A1:E500';
+  const range = 'TOPICS!A1:Z500';
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`;
 
   const res = await fetch(url, {
@@ -63,6 +63,9 @@ export async function syncTopicsFromSheet(profileId, spreadsheetId) {
   const idxPublishTime = colIndex('publish_time');
   const idxTitle = colIndex('topic_title');
   const idxImageRule = colIndex('image_rule');
+  const findOptionalColumn = (...names) => names.map(colIndex).find(index => index !== -1) ?? -1;
+  const idxImageFrameLink = findOptionalColumn('image_frame_drive_link', 'link_drive_khung_anh', 'link_khung_anh');
+  const idxSourceImageLink = findOptionalColumn('source_image_drive_link', 'link_drive_nguon_anh', 'link_nguon_anh');
 
   const seenTopicIds = new Set();
   for (let i = 1; i < rows.length; i++) {
@@ -101,6 +104,8 @@ export async function syncTopicsFromSheet(profileId, spreadsheetId) {
     const publishTime = normalizePublishTime(row[idxPublishTime]);
     const title = String(row[idxTitle]).trim();
     const imageRule = idxImageRule === -1 ? '' : String(row[idxImageRule] || '').trim();
+    const imageFrameDriveLink = idxImageFrameLink === -1 ? '' : String(row[idxImageFrameLink] || '').trim();
+    const sourceImageDriveLink = idxSourceImageLink === -1 ? '' : String(row[idxSourceImageLink] || '').trim();
 
     const rowData = {
       profileId,
@@ -108,7 +113,9 @@ export async function syncTopicsFromSheet(profileId, spreadsheetId) {
       contentDate,
       title,
       publishTime,
-      imageRule
+      imageRule,
+      imageFrameDriveLink,
+      sourceImageDriveLink
     };
 
     const hash = sha256(rowData);
@@ -121,11 +128,12 @@ export async function syncTopicsFromSheet(profileId, spreadsheetId) {
         db.prepare(`
           UPDATE topics 
           SET content_date = ?, topic_title = ?, publish_time = ?, image_rule = ?,
+              image_frame_drive_link = ?, source_image_drive_link = ?,
               content_type = NULL, audience = NULL, key_message = NULL, facts = NULL,
               fact_source_ids = NULL, asset_folder_id = NULL, language = 'vi', cta = NULL, required_text = NULL,
               status = 'READY', source_hash = ?, source_revision = source_revision + 1, imported_at = ?
           WHERE id = ?
-        `).run(contentDate, title, publishTime, imageRule || null, hash, now, existing.id);
+        `).run(contentDate, title, publishTime, imageRule || null, imageFrameDriveLink || null, sourceImageDriveLink || null, hash, now, existing.id);
         updated++;
       } else {
         skipped++;
@@ -133,9 +141,9 @@ export async function syncTopicsFromSheet(profileId, spreadsheetId) {
     } else {
       const id = `top_${profileId}_${topicId}`;
       db.prepare(`
-        INSERT INTO topics (id, profile_id, topic_id, content_date, topic_title, publish_time, image_rule, language, status, source_hash, source_revision, imported_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'vi', 'READY', ?, 1, ?)
-      `).run(id, profileId, topicId, contentDate, title, publishTime, imageRule || null, hash, now);
+        INSERT INTO topics (id, profile_id, topic_id, content_date, topic_title, publish_time, image_rule, image_frame_drive_link, source_image_drive_link, language, status, source_hash, source_revision, imported_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'vi', 'READY', ?, 1, ?)
+      `).run(id, profileId, topicId, contentDate, title, publishTime, imageRule || null, imageFrameDriveLink || null, sourceImageDriveLink || null, hash, now);
       imported++;
     }
   }

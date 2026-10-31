@@ -37,11 +37,13 @@ export function getAllPosts(filterStatus = null, filterProfile = null) {
 export function getPostById(postId) {
   return db.prepare(`
     SELECT p.*, prof.name as profile_name, prof.type as profile_type, prof.folder_id_output, prof.page_name, prof.facebook_page_id, prof.logo_data,
-           r.id as revision_id, r.topic_title, r.caption, r.headline, r.cta, r.image_brief, r.image_data, r.image_mime, r.revision_number, r.revision_hash, r.rule_version_id, r.rule_hash, r.topic_snapshot_json, r.validation_findings_json,
+           r.id as revision_id, r.topic_title, r.caption, r.headline, r.cta, r.image_brief, r.image_data, r.image_mime, r.image_set_json, r.revision_number, r.revision_hash, r.rule_version_id, r.rule_hash, r.topic_snapshot_json, r.validation_findings_json,
            app.approved_at, app.approver_id,
            exp.status as export_status, exp.drive_folder_id, exp.drive_caption_file_id, exp.drive_image_file_id, exp.drive_manifest_file_id, exp.drive_review_file_id,
            mu.uploaded_at as manually_uploaded_at, mu.post_url as manual_post_url, mu.note as manual_note, mu.target_page as manual_target_page,
            (SELECT t.image_rule FROM topics t WHERE t.profile_id = p.profile_id AND t.topic_id = p.topic_id LIMIT 1) as sheet_image_rule,
+           (SELECT t.image_frame_drive_link FROM topics t WHERE t.profile_id = p.profile_id AND t.topic_id = p.topic_id LIMIT 1) as image_frame_drive_link,
+           (SELECT t.source_image_drive_link FROM topics t WHERE t.profile_id = p.profile_id AND t.topic_id = p.topic_id LIMIT 1) as source_image_drive_link,
            (SELECT ae.details_json FROM audit_events ae WHERE ae.entity_id = p.id AND ae.action = 'REQUEST_CHANGES' ORDER BY ae.created_at DESC LIMIT 1) as change_request_details_json,
            (SELECT ae.actor_id FROM audit_events ae WHERE ae.entity_id = p.id AND ae.action = 'REQUEST_CHANGES' ORDER BY ae.created_at DESC LIMIT 1) as change_requested_by,
            (SELECT ae.created_at FROM audit_events ae WHERE ae.entity_id = p.id AND ae.action = 'REQUEST_CHANGES' ORDER BY ae.created_at DESC LIMIT 1) as change_requested_at
@@ -123,6 +125,19 @@ export function createNewRevision(postId, updates, expectedRevisionId = null) {
   const rawImageData = updates.imageData !== undefined ? updates.imageData : (currentRev?.image_data || null);
   const imageData = storeMediaValue(rawImageData, 'images');
   const imageMime = updates.imageMime !== undefined ? updates.imageMime : (currentRev?.image_mime || null);
+  let imageSet;
+  if (updates.imageSet !== undefined) {
+    imageSet = (updates.imageSet || []).map(item => ({
+      ...item,
+      data: storeMediaValue(item.data, 'images')
+    })).filter(item => item.data);
+  } else if (updates.imageData !== undefined) {
+    imageSet = imageData ? [{ data: imageData, mime: imageMime || 'image/png', brief: imageBrief }] : [];
+  } else {
+    try { imageSet = JSON.parse(currentRev?.image_set_json || '[]'); } catch { imageSet = []; }
+    if (!imageSet.length && imageData) imageSet = [{ data: imageData, mime: imageMime || 'image/png', brief: imageBrief }];
+  }
+  const imageSetJson = imageSet.length ? JSON.stringify(imageSet) : null;
 
   // Re-evaluate validation findings
   const findings = [
@@ -135,13 +150,13 @@ export function createNewRevision(postId, updates, expectedRevisionId = null) {
     revisionNumber: nextRevNum,
     caption,
     headline,
-    imageData: imageData ? sha256(imageData) : null,
+    imageData: imageSet.length ? imageSet.map(item => sha256(item.data)) : null,
     ruleHash: currentRev?.rule_hash
   });
 
   db.prepare(`
-    INSERT INTO post_revisions (id, post_id, revision_number, parent_revision_id, topic_title, caption, headline, cta, image_brief, image_data, image_mime, rule_version_id, rule_hash, topic_snapshot_json, validation_findings_json, revision_hash, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO post_revisions (id, post_id, revision_number, parent_revision_id, topic_title, caption, headline, cta, image_brief, image_data, image_mime, image_set_json, rule_version_id, rule_hash, topic_snapshot_json, validation_findings_json, revision_hash, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     nextRevId,
     postId,
@@ -154,6 +169,7 @@ export function createNewRevision(postId, updates, expectedRevisionId = null) {
     imageBrief,
     imageData,
     imageMime,
+    imageSetJson,
     currentRev?.rule_version_id,
     currentRev?.rule_hash,
     currentRev?.topic_snapshot_json,

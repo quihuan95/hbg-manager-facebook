@@ -3,13 +3,14 @@ import { syncTopicsFromSheet } from './google/sheets.js';
 import { resolveFolder, listFolderFiles, downloadFileContent } from './google/drive.js';
 import { exportPostToDrive } from './google/export.js';
 import { generateCaption } from './ai/caption.js';
-import { generateImage } from './ai/image.js';
+import { generateImage, planImageBriefs } from './ai/image.js';
 import { createPostFromTopic, createNewRevision, getPostById, updatePostStatus } from './models/post.js';
 import { createRuleVersion, getLatestPublishedRule } from './models/rule.js';
 import { approvePost } from './review/approval.js';
 import { publishPostToFacebook } from './meta.js';
 import crypto from 'node:crypto';
 import { applyProfileLogo } from './image/logo.js';
+import { applyDriveFrame, loadDriveImages } from './image/drive-assets.js';
 
 function writeAutomationError(action, entityType, entityId, details) {
   db.prepare(`
@@ -160,18 +161,23 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
     const imageInstruction = topic.image_rule
       ? `Chủ đề: ${topic.topic_title}. Quy tắc hình ảnh riêng cho bài này: ${topic.image_rule}`
       : (post.image_brief || caption.imageBrief || '');
-    const image = await generateImage(
-      topic.topic_title,
-      profile.name,
-      rule.content_markdown,
-      imageInstruction
-    );
-    image.imageData = await applyProfileLogo(image.imageData, profile.logo_data);
-    image.imageMime = 'image/png';
+    const referenceImages = await loadDriveImages(topic.source_image_drive_link);
+    const briefs = referenceImages.length
+      ? referenceImages.map((source, index) => imageInstruction || `Tạo ảnh minh họa số ${index + 1} dựa sát trên ảnh nguồn này.`)
+      : await planImageBriefs({ topic: topic.topic_title, caption: caption.caption, profileName: profile.name, ruleText: rule.content_markdown, customBrief: topic.image_rule || '' });
+    const imageSet = [];
+    for (let index = 0; index < briefs.length; index++) {
+      const sources = referenceImages[index] ? [referenceImages[index]] : [];
+      const image = await generateImage(topic.topic_title, profile.name, rule.content_markdown, briefs[index], sources);
+      image.imageData = await applyProfileLogo(image.imageData, profile.logo_data);
+      image.imageData = await applyDriveFrame(image.imageData, topic.image_frame_drive_link);
+      imageSet.push({ data: image.imageData, mime: 'image/png', brief: briefs[index], sourceFileId: sources[0]?.id || null });
+    }
     post = createNewRevision(post.id, {
-      imageBrief: imageInstruction,
-      imageData: image.imageData,
-      imageMime: image.imageMime
+      imageBrief: briefs.join('\n\n'),
+      imageData: imageSet[0].data,
+      imageMime: 'image/png',
+      imageSet
     });
 
     approvePost(post.id, 'automation', { automated: true, source: 'CONTENT_PLAN' });

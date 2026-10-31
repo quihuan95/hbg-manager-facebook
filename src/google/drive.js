@@ -1,5 +1,17 @@
 import { getValidAccessToken } from './oauth.js';
 
+export async function getFileMetadata(fileId) {
+  const token = await getValidAccessToken();
+  if (!token) throw new Error('Chưa kết nối Google Drive.');
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,mimeType,size,trashed`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error(`Không thể đọc file Drive (${fileId}): ${res.statusText}`);
+  const file = await res.json();
+  if (file.trashed) throw new Error(`File Drive (${fileId}) đã nằm trong thùng rác.`);
+  return file;
+}
+
 export async function resolveFolder(folderPathOrId) {
   const token = await getValidAccessToken();
   if (!token) throw new Error('Chưa kết nối Google Drive hoặc cần kết nối lại (NEEDS_RECONNECT).');

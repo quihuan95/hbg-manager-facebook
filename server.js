@@ -13,7 +13,7 @@ import { getAllProfiles, getProfileById, updateProfile, createProfile, deletePro
 import { getAllRuleVersions, createRuleVersion, getLatestPublishedRule, deleteRuleVersions } from './src/models/rule.js';
 import { getAllPosts, getPostById, createPostFromTopic, createNewRevision, updatePostStatus, deletePost } from './src/models/post.js';
 import { generateCaption } from './src/ai/caption.js';
-import { generateImage } from './src/ai/image.js';
+import { generateImage, planImageBriefs } from './src/ai/image.js';
 import { approvePost, requestChanges } from './src/review/approval.js';
 import { exportPostToDrive } from './src/google/export.js';
 import { markManuallyUploaded, markManyManuallyUploaded } from './src/manual_upload.js';
@@ -21,6 +21,7 @@ import { runContentAutomation, syncRulesFromDrive } from './src/automation.js';
 import { testMetaConnection, publishPostToFacebook } from './src/meta.js';
 import { getAppSettings, saveAppSettings } from './src/settings.js';
 import { applyProfileLogo } from './src/image/logo.js';
+import { applyDriveFrame, loadDriveImages } from './src/image/drive-assets.js';
 import { migrateBase64Media, resolveMediaPath } from './src/media.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -76,7 +77,7 @@ function parseBody(req) {
     let body = '';
     req.on('data', chunk => {
       body += chunk.toString();
-      if (body.length > 20 * 1024 * 1024) {
+      if (body.length > 25 * 1024 * 1024) {
         req.destroy();
         reject(new Error('Payload too large'));
       }
@@ -504,20 +505,97 @@ const server = http.createServer(async (req, res) => {
                 post.sheet_image_rule && `Ưu tiên 2 — Rule ảnh từ Sheet: ${post.sheet_image_rule}`
               ].filter(Boolean).join('\n\n')
             : (post.image_brief || post.sheet_image_rule || '');
-          const aiResult = await generateImage(post.topic_title, post.profile_name, rule?.content_markdown || '', effectiveImageBrief);
-          aiResult.imageData = await applyProfileLogo(aiResult.imageData, post.logo_data);
-          aiResult.imageMime = 'image/png';
+          const referenceImages = await loadDriveImages(post.source_image_drive_link);
+          const briefs = referenceImages.length
+            ? referenceImages.map((source, index) => effectiveImageBrief || `Tạo ảnh minh họa số ${index + 1} cho bài viết dựa sát trên ảnh nguồn này.`)
+            : await planImageBriefs({ topic: post.topic_title, caption: post.caption, profileName: post.profile_name, ruleText: rule?.content_markdown || '', customBrief: effectiveImageBrief });
+          const imageSet = [];
+          for (let index = 0; index < briefs.length; index++) {
+            const sources = referenceImages[index] ? [referenceImages[index]] : [];
+            const generated = await generateImage(post.topic_title, post.profile_name, rule?.content_markdown || '', briefs[index], sources);
+            generated.imageData = await applyProfileLogo(generated.imageData, post.logo_data);
+            generated.imageData = await applyDriveFrame(generated.imageData, post.image_frame_drive_link);
+            imageSet.push({ data: generated.imageData, mime: 'image/png', brief: briefs[index], sourceFileId: sources[0]?.id || null });
+          }
           const updatedPost = createNewRevision(postId, {
-            imageBrief: effectiveImageBrief,
-            imageData: aiResult.imageData,
-            imageMime: aiResult.imageMime
-          });
-          return sendJson(res, 200, { success: true, post: updatedPost, model: aiResult.model });
+            imageBrief: briefs.join('\n\n'),
+            imageData: imageSet[0].data,
+            imageMime: 'image/png',
+            imageSet
+          }, body.expectedRevisionId);
+          return sendJson(res, 200, { success: true, post: updatedPost, imageCount: imageSet.length });
         } catch (err) {
           updatePostStatus(postId, 'DRAFT');
           logPostError('IMAGE_GENERATION_FAILED', post, err);
           throw err;
         }
+      }
+
+      // Regenerate one image in the current image set without replacing the others.
+      if (pathname.match(/^\/api\/posts\/([^/]+)\/generate-image\/(\d+)$/) && req.method === 'POST') {
+        const match = pathname.match(/^\/api\/posts\/([^/]+)\/generate-image\/(\d+)$/);
+        const postId = match[1];
+        const imageIndex = Number(match[2]);
+        const post = getPostById(postId);
+        if (!post) return sendJson(res, 404, { error: 'Không tìm thấy bài viết.' });
+        let imageSet = [];
+        try { imageSet = JSON.parse(post.image_set_json || '[]'); } catch {}
+        if (!imageSet.length && post.image_data) imageSet = [{ data: post.image_data, mime: post.image_mime || 'image/png', brief: post.image_brief || '' }];
+        if (!imageSet[imageIndex]) return sendJson(res, 404, { error: 'Không tìm thấy ảnh cần tạo lại.' });
+
+        const body = await parseBody(req);
+        const rule = getLatestPublishedRule(post.profile_id);
+        const brief = String(body.imageBrief || imageSet[imageIndex].brief || post.image_brief || '').trim();
+        updatePostStatus(postId, 'GENERATING');
+        try {
+          const sourceImages = imageSet[imageIndex].sourceFileId
+            ? await loadDriveImages(imageSet[imageIndex].sourceFileId, 1)
+            : [];
+          const generated = await generateImage(post.topic_title, post.profile_name, rule?.content_markdown || '', brief, sourceImages);
+          generated.imageData = await applyProfileLogo(generated.imageData, post.logo_data);
+          generated.imageData = await applyDriveFrame(generated.imageData, post.image_frame_drive_link);
+          imageSet[imageIndex] = {
+            ...imageSet[imageIndex],
+            data: generated.imageData,
+            mime: 'image/png',
+            brief
+          };
+          const updatedPost = createNewRevision(postId, {
+            imageData: imageSet[0].data,
+            imageMime: imageSet[0].mime || 'image/png',
+            imageBrief: imageSet.map(item => item.brief || '').filter(Boolean).join('\n\n'),
+            imageSet
+          }, body.expectedRevisionId);
+          return sendJson(res, 200, { success: true, post: updatedPost, imageIndex });
+        } catch (err) {
+          updatePostStatus(postId, 'DRAFT');
+          logPostError('SINGLE_IMAGE_REGENERATION_FAILED', post, err);
+          throw err;
+        }
+      }
+
+      // Replace one image manually, then apply the same logo/frame pipeline.
+      if (pathname.match(/^\/api\/posts\/([^/]+)\/replace-image\/(\d+)$/) && req.method === 'POST') {
+        const match = pathname.match(/^\/api\/posts\/([^/]+)\/replace-image\/(\d+)$/);
+        const postId = match[1];
+        const imageIndex = Number(match[2]);
+        const post = getPostById(postId);
+        if (!post) return sendJson(res, 404, { error: 'Không tìm thấy bài viết.' });
+        const body = await parseBody(req);
+        if (!String(body.imageData || '').startsWith('data:image/')) return sendJson(res, 400, { error: 'Dữ liệu ảnh không hợp lệ.' });
+        let imageSet = [];
+        try { imageSet = JSON.parse(post.image_set_json || '[]'); } catch {}
+        if (!imageSet.length && post.image_data) imageSet = [{ data: post.image_data, mime: post.image_mime || 'image/png', brief: post.image_brief || '' }];
+        if (!imageSet[imageIndex]) return sendJson(res, 404, { error: 'Không tìm thấy ảnh cần thay thế.' });
+        let imageData = await applyProfileLogo(body.imageData, post.logo_data);
+        imageData = await applyDriveFrame(imageData, post.image_frame_drive_link);
+        imageSet[imageIndex] = { ...imageSet[imageIndex], data: imageData, mime: 'image/png' };
+        const updatedPost = createNewRevision(postId, {
+          imageData: imageSet[0].data,
+          imageMime: imageSet[0].mime || 'image/png',
+          imageSet
+        }, body.expectedRevisionId);
+        return sendJson(res, 200, { success: true, post: updatedPost, imageIndex });
       }
 
       // 13. Update Revision (Manual edit)
@@ -529,7 +607,8 @@ const server = http.createServer(async (req, res) => {
           headline: body.headline,
           cta: body.cta,
           imageData: body.imageData,
-          imageMime: body.imageMime
+          imageMime: body.imageMime,
+          imageSet: body.imageSet
         }, body.expectedRevisionId);
 
         return sendJson(res, 200, updatedPost);

@@ -163,28 +163,23 @@ export async function publishPostToFacebook(postId, options = {}) {
 
   let result;
   if (rev.image_data) {
-    let imgBuffer;
-    const mime = rev.image_mime || 'image/png';
-    const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png';
-
-    imgBuffer = readMediaBuffer(rev.image_data);
-    if (!imgBuffer) throw new Error('Không đọc được file ảnh trong thư mục dữ liệu ứng dụng.');
-
-    // Bước 1: Tải ảnh lên Facebook dưới dạng tài sản đính kèm (published=false)
-    const formData = new FormData();
-    const blob = new Blob([imgBuffer], { type: mime });
-    formData.append('source', blob, `image.${ext}`);
-    formData.append('published', 'false');
-
-    const uploadUrl = `${GRAPH_BASE_URL}/${cleanVersion}/${pageId}/photos?access_token=${encodeURIComponent(accessToken)}`;
-    const uploadRes = await fetch(uploadUrl, {
-      method: 'POST',
-      body: formData
-    });
-    const uploadData = await readJson(uploadRes);
-
-    if (!uploadData?.id) {
-      throw new Error('Không thể tải ảnh lên Facebook để tạo bài viết.');
+    let imageSet = [];
+    try { imageSet = JSON.parse(rev.image_set_json || '[]'); } catch {}
+    if (!imageSet.length) imageSet = [{ data: rev.image_data, mime: rev.image_mime || 'image/png' }];
+    const uploadedMedia = [];
+    for (let index = 0; index < imageSet.length; index++) {
+      const item = imageSet[index];
+      const mime = item.mime || 'image/png';
+      const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png';
+      const imgBuffer = readMediaBuffer(item.data);
+      if (!imgBuffer) throw new Error(`Không đọc được file ảnh số ${index + 1} trong thư mục dữ liệu ứng dụng.`);
+      const formData = new FormData();
+      formData.append('source', new Blob([imgBuffer], { type: mime }), `image-${index + 1}.${ext}`);
+      formData.append('published', 'false');
+      const uploadUrl = `${GRAPH_BASE_URL}/${cleanVersion}/${pageId}/photos?access_token=${encodeURIComponent(accessToken)}`;
+      const uploadData = await readJson(await fetch(uploadUrl, { method: 'POST', body: formData }));
+      if (!uploadData?.id) throw new Error(`Không thể tải ảnh số ${index + 1} lên Facebook.`);
+      uploadedMedia.push({ media_fbid: uploadData.id });
     }
 
     // Bước 2: Đăng bài viết lên thẳng Dòng thời gian / Tab Bài viết (Page Feed) với ảnh đính kèm
@@ -194,7 +189,7 @@ export async function publishPostToFacebook(postId, options = {}) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         message,
-        attached_media: JSON.stringify([{ media_fbid: uploadData.id }]),
+        attached_media: JSON.stringify(uploadedMedia),
         published: 'true',
         access_token: accessToken
       })

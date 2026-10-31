@@ -49,18 +49,22 @@ export async function exportPostToDrive(postId) {
   const captionMd = `# ${rev.headline || post.topic_title}\n\n${rev.caption}\n\n---\n*Kêu gọi hành động (CTA):* ${rev.cta || 'N/A'}\n`;
   const captionUpload = await uploadFileToDrive(revFolder.id, 'caption.md', 'text/markdown; charset=utf-8', Buffer.from(captionMd, 'utf8'));
 
-  // 2. image.png / image.jpg
-  let imageUpload = null;
-  if (rev.image_data) {
-    let imgBuffer;
-    let mime = rev.image_mime || 'image/png';
-    let ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png';
-
-    imgBuffer = readMediaBuffer(rev.image_data);
-    if (!imgBuffer) throw new Error('Không đọc được file ảnh trong thư mục dữ liệu ứng dụng.');
-
-    imageUpload = await uploadFileToDrive(revFolder.id, `image.${ext}`, mime, imgBuffer);
+  // 2. Export every image. Legacy revisions still contain one image_data value.
+  let imageSet = [];
+  try { imageSet = JSON.parse(rev.image_set_json || '[]'); } catch {}
+  if (!imageSet.length && rev.image_data) imageSet = [{ data: rev.image_data, mime: rev.image_mime || 'image/png' }];
+  const imageUploads = [];
+  for (let index = 0; index < imageSet.length; index++) {
+    const item = imageSet[index];
+    const mime = item.mime || 'image/png';
+    const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png';
+    const imgBuffer = readMediaBuffer(item.data);
+    if (!imgBuffer) throw new Error(`Không đọc được file ảnh số ${index + 1} trong thư mục dữ liệu ứng dụng.`);
+    const fileName = imageSet.length === 1 ? `image.${ext}` : `image-${String(index + 1).padStart(2, '0')}.${ext}`;
+    const upload = await uploadFileToDrive(revFolder.id, fileName, mime, imgBuffer);
+    imageUploads.push({ ...upload, fileName, brief: item.brief || null, sourceFileId: item.sourceFileId || null });
   }
+  const imageUpload = imageUploads[0] || null;
 
   // 3. post.json (Manifest)
   const manifest = {
@@ -77,7 +81,8 @@ export async function exportPostToDrive(postId) {
     rule_version_id: rev.rule_version_id,
     rule_hash: rev.rule_hash,
     caption_hash: sha256(rev.caption),
-    image_hash: rev.image_data ? sha256(rev.image_data) : null,
+    image_hash: imageSet[0]?.data ? sha256(imageSet[0].data) : null,
+    images: imageUploads.map((upload, index) => ({ drive_file_id: upload.id, file_name: upload.fileName, hash: sha256(imageSet[index].data), brief: upload.brief, source_file_id: upload.sourceFileId })),
     drive_folder_id: revFolder.id,
     drive_caption_file_id: captionUpload.id,
     drive_image_file_id: imageUpload?.id || null,
@@ -108,7 +113,7 @@ export async function exportPostToDrive(postId) {
 
 ## Danh mục tệp trong bộ bài:
 1. \`caption.md\`: Nội dung bài viết sẵn sàng copy
-2. \`image.${imageUpload ? (rev.image_mime?.includes('jpeg') ? 'jpg' : 'png') : 'png'}\`: Hình ảnh kích thước chuẩn
+2. ${imageUploads.length ? imageUploads.map(upload => `\`${upload.fileName}\``).join(', ') : '`image.png`'}: Toàn bộ hình ảnh của bài viết, mỗi ảnh đã được lồng khung
 3. \`post.json\`: Manifest kỹ thuật và chữ ký số
 4. \`REVIEW.md\`: Biên bản duyệt này
 `;
@@ -151,6 +156,7 @@ export async function exportPostToDrive(postId) {
     files: {
       caption: captionUpload.id,
       image: imageUpload?.id,
+      images: imageUploads.map(upload => upload.id),
       manifest: manifestUpload.id,
       review: reviewUpload.id
     }

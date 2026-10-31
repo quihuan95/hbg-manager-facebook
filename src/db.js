@@ -109,6 +109,8 @@ export function initDb() {
       cta TEXT,
       required_text TEXT,
       image_rule TEXT,
+      image_frame_drive_link TEXT,
+      source_image_drive_link TEXT,
       status TEXT NOT NULL DEFAULT 'READY', -- Rows present in Sheet are confirmed.
       source_hash TEXT NOT NULL,
       source_revision INTEGER NOT NULL DEFAULT 1,
@@ -143,6 +145,7 @@ export function initDb() {
       image_brief TEXT,
       image_data TEXT, -- Internal /media URL; binary content is stored under AppData.
       image_mime TEXT,
+      image_set_json TEXT,
       image_dimensions TEXT,
       rule_version_id TEXT,
       rule_hash TEXT,
@@ -243,9 +246,19 @@ export function initDb() {
   if (!topicColumns.some(column => column.name === 'image_rule')) {
     db.exec('ALTER TABLE topics ADD COLUMN image_rule TEXT');
   }
+  if (!topicColumns.some(column => column.name === 'image_frame_drive_link')) {
+    db.exec('ALTER TABLE topics ADD COLUMN image_frame_drive_link TEXT');
+  }
+  if (!topicColumns.some(column => column.name === 'source_image_drive_link')) {
+    db.exec('ALTER TABLE topics ADD COLUMN source_image_drive_link TEXT');
+  }
   const postColumns = db.prepare('PRAGMA table_info(posts)').all();
   if (!postColumns.some(column => column.name === 'creation_source')) {
     db.exec("ALTER TABLE posts ADD COLUMN creation_source TEXT NOT NULL DEFAULT 'manual'");
+  }
+  const revisionColumns = db.prepare('PRAGMA table_info(post_revisions)').all();
+  if (!revisionColumns.some(column => column.name === 'image_set_json')) {
+    db.exec('ALTER TABLE post_revisions ADD COLUMN image_set_json TEXT');
   }
   // A row present in CONTENT_PLAN is considered confirmed; legacy HOLD/DISABLED values no longer gate processing.
   db.prepare("UPDATE topics SET status = 'READY' WHERE status <> 'READY'").run();
