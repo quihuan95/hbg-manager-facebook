@@ -10,7 +10,11 @@
     "electron": "electron .",
     "electron:dev": "electron . --dev",
     "build:win": "electron-builder --win nsis",
-    "build:portable": "electron-builder --win portable"
+    "build:portable": "electron-builder --win portable",
+    "build:mac": "electron-builder --mac dmg",
+    "build:mac:arm64": "electron-builder --mac dmg --arm64",
+    "build:mac:x64": "electron-builder --mac dmg --x64",
+    "build:mac:universal": "electron-builder --mac dmg --universal"
   },
   "devDependencies": {
     "electron": "^38.2.1",
@@ -36,6 +40,13 @@
       "target": [
         "nsis"
       ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
