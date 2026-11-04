@@ -318,23 +318,6 @@ button [data-lucide],
   padding: 10px 10px;
   font-size: 13px;
 }
-.sidefoot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: auto;
-  font-size: 14px;
-  border-top: 1px solid #29364d;
-  padding-top: 22px;
-}
-.sidefoot small {
-  color: #96a5c0;
-}
-.avatar {
-  border-radius: 50%;
-  padding: 10px 14px;
-  background: #344565;
-}
 main {
   margin-left: 246px;
   padding: 35px 40px 72px;
@@ -1624,8 +1607,7 @@ dialog::backdrop {
   .brand {
     display: none;
   }
-  .workspace,
-  .sidefoot {
+  .workspace {
     display: none;
   }
   nav {
@@ -1963,25 +1945,6 @@ nav a.active [data-lucide] {
 
 .nav-children {
   border-left-color: rgba(255, 255, 255, 0.11);
-}
-
-.sidefoot {
-  position: relative;
-  z-index: 1;
-  margin: auto -2px 0;
-  padding: 16px 8px 2px;
-  border-top-color: rgba(255, 255, 255, 0.10);
-}
-
-.avatar {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: linear-gradient(135deg, #6258ed, #08a6c8);
-  box-shadow: 0 5px 18px rgba(8, 166, 200, 0.22);
 }
 
 main {

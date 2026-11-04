@@ -60,12 +60,25 @@ export async function composeFrame(imageBuffer, frameBuffer) {
 	if (!imageBuffer || !frameBuffer)
 		throw new Error("Thiếu dữ liệu ảnh hoặc khung ảnh.");
 
-	// Normalize both layers independently. The content uses `cover` so its
-	// aspect ratio is preserved; only excess edges are cropped. The frame is
-	// explicitly normalized to the required final 2000 x 2000 resolution.
-	const content = await sharp(imageBuffer)
+	// Preserve the complete source image. A blurred copy fills any small
+	// letterbox area while the sharp foreground uses `contain`, so no people,
+	// text, or other important content is cropped by the frame ratio.
+	const background = await sharp(imageBuffer)
 		.rotate()
 		.resize(CONTENT_WIDTH, CONTENT_HEIGHT, { fit: "cover", position: "centre" })
+		.blur(24)
+		.png()
+		.toBuffer();
+	const foreground = await sharp(imageBuffer)
+		.rotate()
+		.resize(CONTENT_WIDTH, CONTENT_HEIGHT, {
+			fit: "contain",
+			background: { r: 255, g: 255, b: 255, alpha: 0 },
+		})
+		.png()
+		.toBuffer();
+	const content = await sharp(background)
+		.composite([{ input: foreground, left: 0, top: 0 }])
 		.png()
 		.toBuffer();
 	const overlay = await sharp(frameBuffer)

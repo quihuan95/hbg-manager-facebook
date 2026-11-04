@@ -31,9 +31,11 @@ export async function generateImage(topic, profileName, ruleText, customBrief = 
   const profileRule = String(ruleText || '').trim();
   const prompt = [
     `Create a commercial-quality advertising visual for "${profileName}" about: "${topic}".`,
+    'ABSOLUTE LOGO RESTRICTION: Do not generate, draw, imitate, reconstruct, stylize, trace, or include any logo, emblem, trademark, brand mark, watermark, or brand signature anywhere in the image. This restriction overrides every other instruction, reference image, and brand rule. Leave logo placement empty; the application will add the verified Profile logo later as a separate deterministic layer.',
     'Style priority, from highest to lowest: manual prompt, Sheet image rule, default Profile rule. When style directions conflict, follow the higher-priority direction. Brand safety, factual accuracy, and prohibitions always remain mandatory.',
     customBrief && `Higher-priority article image direction:\n${customBrief}`,
     profileRule && `Lowest-priority default Profile rules:\n${profileRule}`,
+    'Create a landscape 3:2 composition. Keep all important people, objects, headlines, and decorative elements inside a generous safe area so nothing is cut off when placed in a frame.',
     'Use a clean, professional composition. Do not invent logos, claims, prices, people, venues, or factual evidence. Avoid messy text in the generated image.'
   ].filter(Boolean).join('\n\n');
 
@@ -43,14 +45,14 @@ export async function generateImage(topic, profileName, ruleText, customBrief = 
   if (hasReferences) {
     body = new FormData();
     body.append('model', model);
-    body.append('prompt', `${prompt}\n\nUse the supplied source images as visual references. Preserve recognizable people, places, products and brand details; do not fabricate factual evidence.`);
-    body.append('size', '1024x1024');
+    body.append('prompt', `${prompt}\n\nUse the supplied source images as visual references. Preserve recognizable people, places, and products, but do not copy or reconstruct any logo, emblem, trademark, watermark, or brand mark visible in the references. Do not fabricate factual evidence.`);
+    body.append('size', '1536x1024');
     referenceImages.forEach((image, index) => {
       body.append('image[]', new Blob([image.buffer], { type: image.mimeType }), image.name || `source-${index + 1}.png`);
     });
   } else {
     headers['Content-Type'] = 'application/json';
-    body = JSON.stringify({ model, prompt, n: 1, size: '1024x1024' });
+    body = JSON.stringify({ model, prompt, n: 1, size: '1536x1024' });
   }
   const res = await fetch(hasReferences ? 'https://api.openai.com/v1/images/edits' : 'https://api.openai.com/v1/images/generations', {
     method: 'POST',
