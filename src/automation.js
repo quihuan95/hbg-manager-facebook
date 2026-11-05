@@ -134,6 +134,11 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
     return { topicId: topic.topic_id, title: topic.topic_title, status: 'skipped', postId: post.id };
   }
 
+  if (post?.status === 'NEEDS_REVIEW' && profile.workflow_mode === 'semi_auto') {
+    progress({ postId: post.id, status: 'SKIPPED', stage: 'COMPLETED', progress: 100 });
+    return { topicId: topic.topic_id, title: topic.topic_title, status: 'awaiting_review', postId: post.id };
+  }
+
   // Approval is final. If Drive export previously failed, retry only the export step.
   if (post?.status === 'APPROVED') {
     try {
@@ -236,6 +241,22 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
     });
 
     throwIfCancelled(shouldCancel);
+    if (profile.workflow_mode === 'semi_auto') {
+      updatePostStatus(post.id, 'NEEDS_REVIEW');
+      writeAutomationSuccess('CONTENT_AUTOMATION_COMPLETED', 'post', post.id, {
+        profileId: profile.id,
+        title: topic.topic_title,
+        requiresApproval: true
+      });
+      progress({ postId: post.id, status: 'COMPLETED', stage: 'COMPLETED', progress: 100 });
+      return {
+        topicId: topic.topic_id,
+        title: topic.topic_title,
+        status: 'review',
+        postId: post.id
+      };
+    }
+
     progress({ postId: post.id, status: 'RUNNING', stage: 'EXPORTING_DRIVE', progress: 88 });
     approvePost(post.id, 'automation', { automated: true, source: 'CONTENT_PLAN' });
     const exported = await exportPostToDrive(post.id);
@@ -341,7 +362,7 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
   } else {
     profiles = db.prepare(`
       SELECT * FROM profiles
-      WHERE active = 1 AND (? = 0 OR workflow_mode = 'auto')
+      WHERE active = 1 AND (? = 0 OR workflow_mode IN ('semi_auto', 'auto'))
       ORDER BY id
     `).all(scheduled ? 1 : 0);
   }
@@ -416,7 +437,7 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
   for (let index = 0; index < profiles.length; index++) {
     const profile = profiles[index];
     const profileResult = report[index];
-    if (scheduled && profile.workflow_mode === 'auto') {
+    if (scheduled && ['semi_auto', 'auto'].includes(profile.workflow_mode)) {
       try {
         profileResult.publishing = await publishDuePosts(profile);
       } catch (error) {

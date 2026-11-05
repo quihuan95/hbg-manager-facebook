@@ -28,6 +28,28 @@ function initializeWindowControls() {
 
 initializeWindowControls();
 
+function initializeThemeToggle() {
+  const button = $('#themeToggle');
+  if (!button) return;
+
+  const applyTheme = theme => {
+    const isDark = theme === 'dark';
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+    button.setAttribute('aria-pressed', String(isDark));
+    button.setAttribute('aria-label', isDark ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối');
+    button.setAttribute('title', isDark ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối');
+    button.innerHTML = `<i data-lucide="${isDark ? 'sun' : 'moon'}"></i><span>${isDark ? 'Giao diện sáng' : 'Giao diện tối'}</span>`;
+    try { localStorage.setItem('hbg-theme', isDark ? 'dark' : 'light'); } catch (_) { /* Storage may be unavailable. */ }
+    renderIcons();
+  };
+
+  applyTheme(document.documentElement.dataset.theme);
+  button.onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+}
+
+initializeThemeToggle();
+
 function initializeButtonFeedback() {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -1530,12 +1552,16 @@ async function renderProfiles() {
             <span>Google Sheet ID</span><b>${esc(p.sheet_id_topics || 'Chưa cấu hình')}</b>
             <span>Facebook Page</span><b>${esc(p.page_name || 'Chưa cấu hình')}${p.facebook_page_id ? ` · ${esc(p.facebook_page_id)}` : ''}</b>
             <span>Logo</span><b>${p.logo_data ? 'Đã tải lên' : 'Chưa cấu hình'}</b>
-            <span>Chế độ</span><b>${p.workflow_mode === 'auto' ? 'Tự động tạo & đăng' : 'Thủ công'}</b>
             <span>Khi xóa khỏi Sheet</span><b>${p.retain_removed_posts ? 'Lưu trữ bài đã tạo' : 'Xóa bài khỏi ứng dụng'}</b>
             <span>Giờ đăng mẫu</span><b>${esc(p.time || '09:00')} · GMT+7</b>
           </div>
           <div class="cardfoot">
             <div>
+              <select class="profile-workflow-select" data-workflow-mode="${p.id}" aria-label="Chế độ vận hành của ${esc(p.name)}" title="Thay đổi chế độ vận hành">
+                <option value="manual" ${p.workflow_mode === 'manual' ? 'selected' : ''}>Thủ công — tự tạo, duyệt và đăng bài</option>
+                <option value="semi_auto" ${!p.workflow_mode || p.workflow_mode === 'semi_auto' ? 'selected' : ''}>Bán tự động — tự tạo, duyệt tay, tự đăng</option>
+                <option value="auto" ${p.workflow_mode === 'auto' ? 'selected' : ''}>Tự động — tự tạo, duyệt và đăng theo lịch</option>
+              </select>
               <button data-sync="${p.id}" title="Đồng bộ Google Sheet" ${p.sheet_id_topics ? '' : 'disabled'}>${icon('refresh-cw')}Đồng bộ</button>
               ${googleSheetUrl(p.sheet_id_topics) ? `<a class="button compact" href="${esc(googleSheetUrl(p.sheet_id_topics))}" target="_blank" rel="noopener noreferrer" title="Mở Google Sheet">Mở Sheet ↗</a>` : ''}
               ${facebookPageUrl(p.facebook_page_id) ? `<a class="button compact" href="${esc(facebookPageUrl(p.facebook_page_id))}" target="_blank" rel="noopener noreferrer" title="Mở Facebook Page ${esc(p.page_name || p.name)}">Mở Page ↗</a>` : ''}
@@ -1601,19 +1627,42 @@ async function renderProfiles() {
       }
     };
   });
-  document.querySelectorAll('[data-sync]').forEach(b => {
-    b.onclick = async () => {
-      b.disabled = true;
-      b.textContent = 'Đang đồng bộ...';
+  document.querySelectorAll('[data-workflow-mode]').forEach(select => {
+    select.onchange = async () => {
+      const profile = cachedProfiles.find(item => item.id === select.dataset.workflowMode);
+      if (!profile) return;
+      const previousMode = profile.workflow_mode || 'semi_auto';
+      select.disabled = true;
       try {
-        const res = await api(`/api/profiles/${b.dataset.sync}/sync-sheet`, { method: 'POST' });
-        const ruleText = res.rule?.changed ? `Rule v${res.rule.version} mới` : `Rule v${res.rule?.version || '—'}`;
-        toast(`Đã đồng bộ ${ruleText} · Thêm: ${res.imported}, Cập nhật: ${res.updated}, Gỡ: ${res.removed || 0} lịch, Lưu trữ: ${res.archivedPosts || 0}, Xóa bài: ${res.removedPosts || 0}`);
-        renderProfiles();
+        await api(`/api/profiles/${encodeURIComponent(profile.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ workflow_mode: select.value })
+        });
+        const modeLabel = select.options[select.selectedIndex].textContent;
+        toast(`Đã chuyển ${profile.name} sang chế độ ${modeLabel}.`);
+        profile.workflow_mode = select.value;
       } catch (err) {
-        toast(`Lỗi đồng bộ Sheet: ${err.message}`, true);
-        b.disabled = false;
-        b.innerHTML = `${icon('refresh-cw')}Đồng bộ Sheet`;
+        select.value = previousMode;
+        toast(`Không thể đổi chế độ vận hành: ${err.message}`, true);
+      } finally {
+        select.disabled = false;
+      }
+    };
+  });
+  document.querySelectorAll('[data-sync]').forEach(button => {
+    button.onclick = async () => {
+      button.disabled = true;
+      button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span>Đang đồng bộ...`;
+      try {
+        const result = await api(`/api/profiles/${encodeURIComponent(button.dataset.sync)}/sync-sheet`, { method: 'POST' });
+        const ruleText = result.rule?.changed ? `Rule v${result.rule.version} mới` : `Rule v${result.rule?.version || '—'}`;
+        toast(`Đã đồng bộ ${ruleText} · Thêm: ${result.imported}, Cập nhật: ${result.updated}, Gỡ: ${result.removed || 0} lịch, Lưu trữ: ${result.archivedPosts || 0}, Xóa bài: ${result.removedPosts || 0}`);
+        renderProfiles();
+      } catch (error) {
+        toast(`Lỗi đồng bộ Sheet: ${error.message}`, true);
+        button.disabled = false;
+        button.innerHTML = `${icon('refresh-cw')}Đồng bộ`;
+        renderIcons();
       }
     };
   });
@@ -1649,11 +1698,12 @@ function editProfile(p) {
     ${p?.logo_data ? `<div class="profile-logo-preview"><img src="${esc(p.logo_data)}" alt="Logo hiện tại"><span>Logo hiện tại · tải file mới để thay thế</span></div>` : ''}
     <label>Chế độ vận hành
       <select name="workflow_mode">
-        <option value="manual" ${p?.workflow_mode !== 'auto' ? 'selected' : ''}>Thủ công — tự tạo, duyệt và đăng bài</option>
+        <option value="manual" ${p?.workflow_mode === 'manual' ? 'selected' : ''}>Thủ công — tự tạo, duyệt và đăng bài</option>
+        <option value="semi_auto" ${!p?.workflow_mode || p?.workflow_mode === 'semi_auto' ? 'selected' : ''}>Bán tự động — tự tạo, duyệt thủ công, tự đăng bài đã duyệt</option>
         <option value="auto" ${p?.workflow_mode === 'auto' ? 'selected' : ''}>Tự động — tạo bài và đăng đúng lịch</option>
       </select>
     </label>
-    <p class="muted">Chế độ tự động yêu cầu OpenAI, Google Drive và Facebook Page Token hoạt động. Mọi dòng trong Sheet đều được xem là lịch đã chốt.</p>
+    <p class="muted">Bán tự động là chế độ mặc định: hệ thống tự tạo bài nhưng chờ bạn duyệt, sau đó chỉ tự đăng các bài đã duyệt. Chế độ tự động sẽ tự duyệt và đăng. Cả hai yêu cầu OpenAI, Google Drive và Facebook Page Token hoạt động.</p>
     <div class="switch-setting">
       <div>
         <b>Giữ bài đã tạo khi đồng bộ</b>

@@ -5,6 +5,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>The HBG • Content Studio</title>
+  <script>
+    try {
+      document.documentElement.dataset.theme = localStorage.getItem('hbg-theme') === 'dark' ? 'dark' : 'light';
+    } catch (_) {
+      document.documentElement.dataset.theme = 'light';
+    }
+  </script>
   <link rel="stylesheet" href="vendor/simplebar.min.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -46,6 +53,9 @@
         </div>
       </div>
       <div class="header-actions">
+        <button type="button" id="themeToggle" class="theme-toggle" aria-label="Chuyển sang giao diện tối" title="Chuyển sang giao diện tối">
+          <i data-lucide="moon"></i><span>Giao diện tối</span>
+        </button>
         <button type="button" id="refreshPage" class="header-refresh" aria-label="Làm mới dữ liệu trang" title="Làm mới dữ liệu trang">
           <i data-lucide="refresh-cw"></i><span>Làm mới</span>
         </button>

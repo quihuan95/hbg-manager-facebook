@@ -28,8 +28,8 @@ function normalizeColor(value) {
 }
 
 function normalizeWorkflowMode(value) {
-  const mode = String(value || 'manual').trim().toLowerCase();
-  if (!['manual', 'auto'].includes(mode)) throw new Error('Chế độ Profile không hợp lệ.');
+  const mode = String(value || 'semi_auto').trim().toLowerCase();
+  if (!['manual', 'semi_auto', 'auto'].includes(mode)) throw new Error('Chế độ Profile không hợp lệ.');
   return mode;
 }
 

@@ -23,5 +23,5 @@ Thumbs.db
 .vscode/
 *.tmp
 *.temp
-./agents/*
+/.agents/
 

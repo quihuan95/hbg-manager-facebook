@@ -69,7 +69,7 @@ export function initDb() {
       page_name TEXT,
       facebook_page_id TEXT,
       color TEXT NOT NULL DEFAULT '#4970d5',
-      workflow_mode TEXT NOT NULL DEFAULT 'manual',
+      workflow_mode TEXT NOT NULL DEFAULT 'semi_auto',
       retain_removed_posts INTEGER NOT NULL DEFAULT 1,
       logo_data TEXT,
       logo_mime TEXT,
@@ -268,7 +268,7 @@ export function initDb() {
     });
   }
   if (!profileColumns.some(column => column.name === 'workflow_mode')) {
-    db.exec("ALTER TABLE profiles ADD COLUMN workflow_mode TEXT NOT NULL DEFAULT 'manual'");
+    db.exec("ALTER TABLE profiles ADD COLUMN workflow_mode TEXT NOT NULL DEFAULT 'semi_auto'");
   }
   if (!profileColumns.some(column => column.name === 'retain_removed_posts')) {
     db.exec('ALTER TABLE profiles ADD COLUMN retain_removed_posts INTEGER NOT NULL DEFAULT 1');
@@ -382,8 +382,8 @@ export function initDb() {
     const now = new Date().toISOString();
     for (const p of defaultProfiles) {
       db.prepare(`
-        INSERT INTO profiles (id, name, type, brand, folder_id_rules, folder_id_topics, folder_id_materials, folder_id_output, time, active, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        INSERT INTO profiles (id, name, type, brand, folder_id_rules, folder_id_topics, folder_id_materials, folder_id_output, workflow_mode, time, active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'semi_auto', ?, 1, ?, ?)
       `).run(p.id, p.name, p.type, p.brand, p.folder_rules, p.folder_topics, p.folder_materials, p.folder_output, p.time, now, now);
 
       // Create initial rule version
