@@ -3398,6 +3398,26 @@ html[data-theme="dark"] .action-menu-popover .action-menu-item.primary {
   color: white;
   background: linear-gradient(135deg, #7168f4, #4940cb);
 }
+html[data-theme="dark"] .log {
+  border-bottom-color: rgba(255,255,255,0.08);
+}
+html[data-theme="dark"] .log time { color: #8f9bb6; }
+html[data-theme="dark"] .log strong { color: #e7ebf8; }
+html[data-theme="dark"] .log small,
+html[data-theme="dark"] .log-details { color: #9eabc6; }
+html[data-theme="dark"] .log.error-log {
+  border-left-color: #ef6873;
+  background: rgba(115,35,50,0.24);
+}
+html[data-theme="dark"] .log.error-log strong { color: #ff9da6; }
+html[data-theme="dark"] .log.error-log time { color: #c39aa2; }
+html[data-theme="dark"] .log.error-log .log-details,
+html[data-theme="dark"] .log.error-log small { color: #c4a7ae; }
+html[data-theme="dark"] .log-action {
+  color: #e4e9fa;
+  border-color: rgba(255,255,255,0.12);
+  background: rgba(47,54,82,0.68);
+}
 
 @media (max-width: 700px) {
   .theme-toggle { min-width: 42px; padding-right: 11px; padding-left: 11px; }
