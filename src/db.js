@@ -210,6 +210,39 @@ export function initDb() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS automation_jobs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'QUEUED', -- QUEUED, RUNNING, CANCEL_REQUESTED, COMPLETED, PARTIAL, CANCELLED, FAILED
+      total_items INTEGER NOT NULL DEFAULT 0,
+      completed_items INTEGER NOT NULL DEFAULT 0,
+      failed_items INTEGER NOT NULL DEFAULT 0,
+      cancelled_items INTEGER NOT NULL DEFAULT 0,
+      worker_count INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS automation_job_items (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      topic_id TEXT NOT NULL,
+      post_id TEXT,
+      title TEXT,
+      status TEXT NOT NULL DEFAULT 'QUEUED', -- QUEUED, RUNNING, COMPLETED, SKIPPED, CANCELLED, FAILED
+      stage TEXT NOT NULL DEFAULT 'QUEUED',
+      progress INTEGER NOT NULL DEFAULT 0,
+      worker_number INTEGER,
+      error_message TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT,
+      FOREIGN KEY (job_id) REFERENCES automation_jobs(id) ON DELETE CASCADE,
+      UNIQUE(job_id, topic_id)
+    );
+
     CREATE TABLE IF NOT EXISTS audit_events (
       id TEXT PRIMARY KEY,
       actor_id TEXT,
@@ -260,6 +293,10 @@ export function initDb() {
   if (!revisionColumns.some(column => column.name === 'image_set_json')) {
     db.exec('ALTER TABLE post_revisions ADD COLUMN image_set_json TEXT');
   }
+  const automationJobColumns = db.prepare('PRAGMA table_info(automation_jobs)').all();
+  if (!automationJobColumns.some(column => column.name === 'cancelled_items')) {
+    db.exec('ALTER TABLE automation_jobs ADD COLUMN cancelled_items INTEGER NOT NULL DEFAULT 0');
+  }
   // These lookups run every time the editor opens. Explicit indexes avoid full
   // table scans once revision and audit history grows.
   db.exec(`
@@ -270,6 +307,9 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_posts_profile_date ON posts(profile_id, content_date DESC, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_topics_date_time ON topics(content_date, publish_time, topic_id);
     CREATE INDEX IF NOT EXISTS idx_operations_post_stage ON operations(post_id, stage);
+    CREATE INDEX IF NOT EXISTS idx_automation_jobs_status_created ON automation_jobs(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_automation_job_items_job ON automation_job_items(job_id, status);
+    CREATE INDEX IF NOT EXISTS idx_automation_job_items_topic ON automation_job_items(topic_id, created_at DESC);
   `);
   // A row present in CONTENT_PLAN is considered confirmed; legacy HOLD/DISABLED values no longer gate processing.
   db.prepare("UPDATE topics SET status = 'READY' WHERE status <> 'READY'").run();

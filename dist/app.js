@@ -28,6 +28,46 @@ function initializeWindowControls() {
 
 initializeWindowControls();
 
+function initializeButtonFeedback() {
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  document.addEventListener('pointerdown', event => {
+    if (reducedMotion.matches || event.button !== 0) return;
+    const button = event.target.closest('button, a.button');
+    if (!button || button.closest('.window-controls') || button.disabled || button.getAttribute('aria-disabled') === 'true') return;
+
+    const bounds = button.getBoundingClientRect();
+    const ripple = document.createElement('span');
+    const diameter = Math.hypot(bounds.width, bounds.height) * 2;
+    ripple.className = 'button-ripple';
+    ripple.setAttribute('aria-hidden', 'true');
+    ripple.style.left = `${event.clientX - bounds.left}px`;
+    ripple.style.top = `${event.clientY - bounds.top}px`;
+    ripple.style.setProperty('--ripple-scale', Math.max(8, diameter / 12).toFixed(2));
+    button.querySelector('.button-ripple')?.remove();
+    button.appendChild(ripple);
+    ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
+  });
+
+  document.addEventListener('keydown', event => {
+    if (event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;
+    const button = event.target.closest('button, a.button');
+    if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') return;
+    button.classList.add('is-keyboard-pressed');
+  });
+
+  const releaseKeyboardPress = event => {
+    event.target.closest?.('button, a.button')?.classList.remove('is-keyboard-pressed');
+  };
+  document.addEventListener('keyup', releaseKeyboardPress);
+  document.addEventListener('focusout', releaseKeyboardPress);
+  window.addEventListener('blur', () => {
+    document.querySelectorAll('.is-keyboard-pressed').forEach(button => button.classList.remove('is-keyboard-pressed'));
+  });
+}
+
+initializeButtonFeedback();
+
 function googleSheetUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -77,6 +117,52 @@ let notificationCursor = new Date().toISOString();
 const getCache = new Map();
 const GET_CACHE_TTL_MS = 3000;
 let searchRenderTimer = 0;
+let activeAutomationItems = new Map();
+const trackedAutomationJobs = new Set();
+let automationPollBusy = false;
+let automationJobsWereActive = false;
+
+function automationStageText(item) {
+  const stage = item?.stage || 'QUEUED';
+  if (stage === 'QUEUED') return 'Đang chờ worker';
+  if (stage === 'PREPARING') return 'Đang chuẩn bị';
+  if (stage === 'VALIDATING') return 'Đang kiểm tra dữ liệu';
+  if (stage === 'GENERATING_CAPTION') return 'Đang tạo caption';
+  if (stage === 'PLANNING_IMAGES') return 'Đang lên kế hoạch ảnh';
+  if (stage.startsWith('GENERATING_IMAGE_')) {
+    const match = stage.match(/GENERATING_IMAGE_(\d+)_OF_(\d+)/);
+    return match ? `Đang tạo ảnh ${match[1]}/${match[2]}` : 'Đang tạo ảnh';
+  }
+  if (stage === 'EXPORTING_DRIVE') return 'Đang xuất Google Drive';
+  if (stage === 'CANCELLED' || item?.status === 'CANCELLED') return 'Đã hủy';
+  if (item?.status === 'COMPLETED') return 'Đã tạo xong';
+  if (item?.status === 'SKIPPED') return 'Đã bỏ qua';
+  if (item?.status === 'FAILED') return 'Tạo bài thất bại';
+  return 'Đang xử lý';
+}
+
+function automationStatusTag(item) {
+  const terminalClass = ['FAILED', 'CANCELLED'].includes(item.status) ? 'error' : item.status === 'COMPLETED' ? 'success' : 'generating';
+  const worker = item.worker_number ? ` · W${item.worker_number}` : '';
+  return `<span class="tag ${terminalClass}" title="${esc(item.error_message || '')}">${esc(automationStageText(item))}${worker} · ${Number(item.progress || 0)}%</span>`;
+}
+
+async function pollAutomationStatus() {
+  if (automationPollBusy || document.hidden || trackedAutomationJobs.size) return;
+  const route = getRoute();
+  if (!['create_posts', 'created_posts', 'publishing'].includes(route)) return;
+  automationPollBusy = true;
+  try {
+    const result = await api(`/api/automation/jobs?active=true&_=${Date.now()}`);
+    const hasActive = Boolean(result.jobs?.length);
+    if (hasActive || automationJobsWereActive) await renderQueue();
+    automationJobsWereActive = hasActive;
+  } catch {
+    // Polling must not interrupt the current screen.
+  } finally {
+    automationPollBusy = false;
+  }
+}
 
 function renderIcons() {
   if (!window.lucide) return;
@@ -86,6 +172,32 @@ function renderIcons() {
 function icon(name) {
   return `<i data-lucide="${esc(name)}"></i>`;
 }
+
+function initializePageRefresh() {
+  const button = $('#refreshPage');
+  if (!button) return;
+  button.onclick = async () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.innerHTML = '<span class="button-spinner" aria-hidden="true"></span><span>Đang làm mới...</span>';
+    getCache.clear();
+    serverStatus = null;
+    try {
+      await render();
+      toast('Đã làm mới dữ liệu.');
+    } catch (error) {
+      toast(`Không thể làm mới: ${error.message}`, true);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.innerHTML = `${icon('refresh-cw')}<span>Làm mới</span>`;
+      renderIcons();
+    }
+  };
+}
+
+initializePageRefresh();
 
 const iconObserver = new MutationObserver(mutations => {
   if (mutations.some(mutation => [...mutation.addedNodes].some(node =>
@@ -279,17 +391,23 @@ async function renderQueue() {
   const queueMode = getRoute();
   await fetchProfiles();
   let syncedTopics = [];
+  let activeJobs = [];
   try {
+    const activeResult = await api(`/api/automation/jobs?active=true&_=${Date.now()}`);
     [cachedPosts, syncedTopics] = await Promise.all([
       api('/api/posts'),
       api('/api/topics?all=true')
     ]);
+    activeJobs = activeResult.jobs || [];
   } catch {
     cachedPosts = [];
   }
 
+  activeAutomationItems = new Map(activeJobs.flatMap(job => job.items || []).map(item => [item.topic_id, item]));
+  const activeAutomationByPost = new Map(activeJobs.flatMap(job => job.items || []).filter(item => item.post_id).map(item => [item.post_id, item]));
+
   // The Create view is an inbox: once a topic has a post, it belongs in Created Posts.
-  if (queueMode === 'create_posts') syncedTopics = syncedTopics.filter(topic => !topic.post_id);
+  if (queueMode === 'create_posts') syncedTopics = syncedTopics.filter(topic => !topic.post_id || activeAutomationItems.has(topic.id));
 
   const publishingStatuses = ['APPROVED', 'READY_FOR_MANUAL_UPLOAD', 'MANUALLY_UPLOADED'];
   const statusOptions = Object.entries(labels).filter(([key]) => queueMode !== 'publishing' || publishingStatuses.includes(key));
@@ -337,25 +455,44 @@ async function renderQueue() {
           <button id="syncAllFromCreate">${icon('refresh-cw')}Đồng bộ tất cả Sheet</button>
         </div>
       </div>
+      ${activeJobs.length ? `<div class="automation-job-monitor" role="status" aria-live="polite">
+        ${activeJobs.map(job => {
+          const progress = job.items?.length
+            ? Math.round(job.items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / job.items.length)
+            : 0;
+          return `<div class="automation-job-summary">
+            <div>
+              <span class="button-spinner" aria-hidden="true"></span>
+              <strong>Đang tạo ${job.completed_items || 0}/${job.total_items} bài</strong>
+              <small>${job.worker_count || '—'} worker · ${progress}%</small>
+            </div>
+            <progress value="${progress}" max="100" aria-label="Tiến độ tạo bài ${progress}%">${progress}%</progress>
+            <button type="button" class="danger automation-cancel" data-cancel-job="${esc(job.id)}" ${job.status === 'CANCEL_REQUESTED' ? 'disabled' : ''}>
+              ${job.status === 'CANCEL_REQUESTED' ? `${icon('loader-circle')}Đang hủy...` : `${icon('square')}Hủy tạo`}
+            </button>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
       <div class="tablewrap" data-simplebar data-simplebar-auto-hide="false">
         <table class="queue-table topic-queue-table">
           <thead><tr><th><input type="checkbox" id="selectAllTopics" aria-label="Chọn tất cả lịch có thể tạo"></th><th>CHỦ ĐỀ TỪ SHEET</th><th>PROFILE</th><th>LỊCH ĐĂNG</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead>
           <tbody>
             ${visibleTopics.map(t => {
+              const activeItem = activeAutomationItems.get(t.id);
               const finished = ['READY_FOR_MANUAL_UPLOAD', 'MANUALLY_UPLOADED'].includes(t.post_status);
               const hasSchedule = /^\d{4}-\d{2}-\d{2}$/.test(t.content_date || '') && Boolean(t.publish_time);
-              const canGenerate = hasSchedule && !finished;
-              const canCreateOne = !finished;
+              const canGenerate = hasSchedule && !finished && !activeItem;
+              const canCreateOne = !finished && !activeItem;
               const availability = !hasSchedule ? ' · Thiếu ngày/giờ' : '';
               return `<tr>
                 <td><input type="checkbox" data-topic-select value="${esc(t.id)}" ${canGenerate ? '' : 'disabled'} aria-label="Chọn ${esc(t.topic_title)}"></td>
                 <td><div class="topic" title="${esc(t.topic_title)}">${esc(t.topic_title)}</div><small>${esc(t.topic_id)} · Đã chốt từ Sheet${esc(availability)}</small></td>
                 <td class="profile-cell">${esc(t.profile_name || t.profile_id)}</td>
                 <td class="schedule-cell">${esc(t.content_date || 'Chưa có ngày')} <small>${esc(t.publish_time || 'Chưa có giờ')} · GMT+7</small></td>
-                <td class="status-cell">${t.post_id ? badge(t.post_status) : '<span class="tag">Chưa tạo</span>'}</td>
+                <td class="status-cell" aria-live="polite">${activeItem ? automationStatusTag(activeItem) : (t.post_id ? badge(t.post_status) : '<span class="tag">Chưa tạo</span>')}</td>
                 <td><div class="row-actions">${finished
                   ? `<button data-open="${esc(t.post_id)}">${icon('external-link')}Mở bài</button>`
-                  : `<button data-create-topic="${esc(t.id)}" ${canCreateOne ? '' : 'disabled'} class="primary">${icon('sparkles')}Tạo bài</button>`}
+                  : `<button data-create-topic="${esc(t.id)}" ${canCreateOne ? '' : 'disabled'} class="primary">${activeItem ? `${icon('loader-circle')}Đang tạo...` : `${icon('sparkles')}Tạo bài`}</button>`}
                   <button data-delete-topic="${esc(t.id)}" class="icon-button" title="Xóa lịch khỏi tool" aria-label="Xóa lịch">${icon('trash-2')}</button></div>
                 </td>
               </tr>`;
@@ -384,7 +521,7 @@ async function renderQueue() {
         </div>
       </div>
       <div class="tablewrap" data-simplebar data-simplebar-auto-hide="false">
-        <table class="queue-table post-queue-table">
+        <table class="queue-table post-queue-table ${queueMode === 'created_posts' ? 'created-posts-table' : 'publishing-posts-table'}">
           <thead>
             <tr>
               <th><input type="checkbox" id="selectAllPosts" aria-label="Chọn tất cả bài"></th>
@@ -398,6 +535,7 @@ async function renderQueue() {
           <tbody>
             ${visibleJobs.map(j => {
               const p = cachedProfiles.find(x => x.id === j.profile_id);
+              const activeItem = activeAutomationByPost.get(j.id);
               return `
                 <tr>
                   <td><input type="checkbox" data-post-select value="${esc(j.id)}" aria-label="Chọn ${esc(j.topic_title)}"></td>
@@ -412,7 +550,7 @@ async function renderQueue() {
                     </div>
                   </td>
                   <td>${esc(j.content_date)} <small>${esc(j.scheduled_time || '09:00')} · GMT+7</small></td>
-                  <td>${badge(j.status)}</td>
+                  <td>${activeItem ? automationStatusTag(activeItem) : badge(j.status)}</td>
                   <td><div class="row-actions">
                     ${queueMode === 'publishing' && ['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(j.status)
                       ? `<button data-publish="${j.id}" class="primary" title="Đăng bài lên Facebook">${icon('send')}Đăng</button>`
@@ -459,6 +597,21 @@ async function renderQueue() {
     runAutomation(e.currentTarget, topicIds);
   };
   $('#syncAllFromCreate').onclick = e => syncAllProfiles(e.currentTarget, renderQueue);
+  document.querySelectorAll('[data-cancel-job]').forEach(cancelButton => {
+    cancelButton.onclick = async () => {
+      cancelButton.disabled = true;
+      cancelButton.innerHTML = `<span class="button-spinner" aria-hidden="true"></span>Đang yêu cầu hủy...`;
+      try {
+        await api(`/api/automation/jobs/${encodeURIComponent(cancelButton.dataset.cancelJob)}/cancel`, { method: 'POST' });
+        toast('Đã gửi yêu cầu hủy. Worker sẽ dừng tại checkpoint an toàn gần nhất.');
+        await renderQueue();
+      } catch (error) {
+        toast(`Không thể hủy tác vụ: ${error.message}`, true);
+        cancelButton.disabled = false;
+        cancelButton.innerHTML = `${icon('square')}Hủy tạo`;
+      }
+    };
+  });
 
   document.querySelectorAll('[data-create-topic]').forEach(button => {
     button.onclick = () => {
@@ -477,7 +630,7 @@ async function renderQueue() {
           <label>Giờ đăng<input type="time" name="time" required value="${esc(topic.publish_time || '09:00')}"></label>
         </div>
       `, f => {
-        runAutomation(null, [topic.id], {
+        runAutomation(button, [topic.id], {
           [topic.id]: { date: f.get('date'), time: f.get('time') }
         });
       });
@@ -743,27 +896,98 @@ async function newJob() {
 
 async function runAutomation(button, topicIds = null, scheduleOverrides = {}) {
   const originalContent = button?.innerHTML || `${icon('sparkles')}Tạo bài tự động`;
+  const selectedCount = Array.isArray(topicIds) ? topicIds.length : 0;
+  const estimatedWorkers = Math.min(5, Math.max(1, selectedCount));
+  const statusText = selectedCount > 1
+    ? `Đang tạo ${selectedCount} bài · ${estimatedWorkers} worker...`
+    : 'Đang tạo bài...';
+  const affectedRows = (topicIds || []).map(id =>
+    document.querySelector(`[data-topic-select][value="${CSS.escape(id)}"]`)?.closest('tr')
+  ).filter(Boolean);
+  const affectedControls = new Map();
+  let trackedJobId = null;
+  affectedRows.forEach(row => {
+    row.querySelectorAll('button, input').forEach(control => affectedControls.set(control, control.disabled));
+  });
+
+  const setRowsStatus = (text, className) => {
+    affectedRows.forEach(row => {
+      const statusCell = row.querySelector('.status-cell');
+      if (statusCell) statusCell.innerHTML = `<span class="tag ${className}">${esc(text)}</span>`;
+      row.querySelectorAll('button, input').forEach(control => { control.disabled = true; });
+      row.classList.toggle('automation-running', className === 'generating');
+    });
+  };
+
   if (button) {
     button.disabled = true;
-    button.textContent = 'Đang tạo...';
+    button.setAttribute('aria-busy', 'true');
+    button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span>${esc(statusText)}`;
   }
+  setRowsStatus('Đang tạo nội dung...', 'generating');
   try {
-    const result = await api('/api/automation/run', {
+    const accepted = await api('/api/automation/run', {
       method: 'POST',
       body: JSON.stringify({ topicIds, scheduleOverrides })
     });
-    const s = result.summary || {};
-    const errorCount = (s.failed || 0) + (s.profileErrors || 0);
-    toast(`Tự động hoàn tất · Xuất: ${s.exported || 0} · Bỏ qua: ${s.skipped || 0} · Lỗi: ${errorCount}`,
-      !result.success);
-    await renderQueue();
+    let job = accepted.job;
+    if (!job?.id) throw new Error('Máy chủ không trả về mã tác vụ tạo bài.');
+    trackedJobId = job.id;
+    trackedAutomationJobs.add(job.id);
+    while (['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(job.status)) {
+      (job.items || []).forEach(item => {
+        const row = affectedRows.find(candidate => candidate.querySelector(`[data-topic-select][value="${CSS.escape(item.topic_id)}"]`));
+        const statusCell = row?.querySelector('.status-cell');
+        if (statusCell) statusCell.innerHTML = automationStatusTag(item);
+      });
+      const totalProgress = job.items?.length
+        ? Math.round(job.items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / job.items.length)
+        : 0;
+      if (button?.isConnected) {
+        button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span>Đang tạo ${job.completed_items || 0}/${job.total_items} · ${totalProgress}%`;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      job = (await api(`/api/automation/jobs/${encodeURIComponent(job.id)}?_=${Date.now()}`)).job;
+    }
+    const errorCount = Number(job.failed_items || 0);
+    const completedCount = Number(job.completed_items || 0);
+    const hasErrors = ['FAILED', 'PARTIAL'].includes(job.status);
+    const wasCancelled = job.status === 'CANCELLED' || Number(job.cancelled_items || 0) > 0;
+    trackedAutomationJobs.delete(job.id);
+    (job.items || []).forEach(item => {
+      const row = affectedRows.find(candidate => candidate.querySelector(`[data-topic-select][value="${CSS.escape(item.topic_id)}"]`));
+      const statusCell = row?.querySelector('.status-cell');
+      if (statusCell) statusCell.innerHTML = automationStatusTag(item);
+    });
+    if (button?.isConnected) button.innerHTML = wasCancelled
+      ? `${icon('ban')}Đã hủy ${job.cancelled_items || 0} bài`
+      : hasErrors
+      ? `${icon('triangle-alert')}Hoàn tất · ${errorCount} lỗi`
+      : `${icon('check')}Đã tạo ${completedCount} bài`;
+    toast(wasCancelled
+      ? `Đã hủy tác vụ · Hoàn thành: ${completedCount} · Đã hủy: ${job.cancelled_items || 0}`
+      : `Tác vụ hoàn tất · ${job.worker_count || 0} worker · Thành công: ${completedCount} · Lỗi: ${errorCount}`,
+    hasErrors && !wasCancelled);
+    await new Promise(resolve => setTimeout(resolve, 900));
+    if (getRoute() === 'create_posts') await renderQueue();
   } catch (err) {
+    setRowsStatus('Tạo bài thất bại', 'error');
+    if (button?.isConnected) button.innerHTML = `${icon('circle-alert')}Thử lại`;
     toast(`Lỗi chạy tự động: ${err.message}`, true);
+    await new Promise(resolve => setTimeout(resolve, 900));
   } finally {
+    if (trackedJobId) trackedAutomationJobs.delete(trackedJobId);
     if (button?.isConnected) {
       button.disabled = false;
+      button.removeAttribute('aria-busy');
       button.innerHTML = originalContent;
     }
+    affectedRows.forEach(row => {
+      row.classList.remove('automation-running');
+    });
+    affectedControls.forEach((wasDisabled, control) => {
+      if (control.isConnected) control.disabled = wasDisabled;
+    });
   }
 }
 
@@ -2052,3 +2276,4 @@ render();
 setInterval(() => {
   if (!document.hidden) pollGlobalNotifications();
 }, 15000);
+setInterval(pollAutomationStatus, 2000);

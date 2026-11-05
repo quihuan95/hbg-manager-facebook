@@ -39,7 +39,9 @@ export const config = {
   driveOutputRequired: process.env.DRIVE_OUTPUT_REQUIRED !== 'false',
   automation: {
     enabled: process.env.AUTOMATION_ENABLED !== 'false',
-    intervalMinutes: Math.max(1, parseInt(process.env.AUTOMATION_INTERVAL_MINUTES || '5', 10))
+    intervalMinutes: Math.max(1, parseInt(process.env.AUTOMATION_INTERVAL_MINUTES || '5', 10)),
+    minWorkers: Math.min(5, Math.max(2, parseInt(process.env.AUTOMATION_MIN_WORKERS || '2', 10) || 2)),
+    maxWorkers: Math.min(5, Math.max(2, parseInt(process.env.AUTOMATION_MAX_WORKERS || '5', 10) || 5))
   },
 
   // Database

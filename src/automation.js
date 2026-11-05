@@ -11,6 +11,39 @@ import { publishPostToFacebook } from './meta.js';
 import crypto from 'node:crypto';
 import { applyProfileLogo } from './image/logo.js';
 import { applyDriveFrame, loadDriveImages } from './image/drive-assets.js';
+import { config } from './config.js';
+
+class AutomationCancelledError extends Error {
+  constructor() {
+    super('Tác vụ tạo bài đã được hủy.');
+    this.name = 'AutomationCancelledError';
+  }
+}
+
+function throwIfCancelled(shouldCancel) {
+  if (shouldCancel?.()) throw new AutomationCancelledError();
+}
+
+export function getAutomationWorkerCount(taskCount) {
+  if (taskCount <= 0) return 0;
+  const minWorkers = Math.min(config.automation.minWorkers, config.automation.maxWorkers);
+  const maxWorkers = Math.max(config.automation.minWorkers, config.automation.maxWorkers);
+  return Math.min(taskCount, Math.max(minWorkers, Math.min(maxWorkers, taskCount)));
+}
+
+async function runWorkerPool(items, workerCount, handler) {
+  if (!items.length) return [];
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async workerIndex => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await handler(items[index], index, workerIndex + 1);
+    }
+  };
+  await Promise.all(Array.from({ length: workerCount }, (_, index) => worker(index)));
+  return results;
+}
 
 function writeAutomationError(action, entityType, entityId, details) {
   db.prepare(`
@@ -69,7 +102,8 @@ export async function syncRulesFromDrive(profile) {
   return { changed: true, version: created.version };
 }
 
-async function processTopic(profile, topic, scheduleOverride = null, scheduledRun = false) {
+async function processTopic(profile, topic, scheduleOverride = null, scheduledRun = false, progress = () => {}, shouldCancel = null) {
+  throwIfCancelled(shouldCancel);
   const contentDate = scheduleOverride?.date || topic.content_date;
   const publishTime = scheduleOverride?.time || topic.publish_time || profile.time || '09:00';
 
@@ -80,6 +114,7 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
       title: topic.topic_title,
       error: 'Thiếu content_date hoặc publish_time trong CONTENT_PLAN.'
     });
+    progress({ status: 'FAILED', stage: 'VALIDATING', progress: 100, error: 'Topic READY phải có content_date và publish_time trong CONTENT_PLAN.' });
     return {
       topicId: topic.topic_id,
       title: topic.topic_title,
@@ -95,13 +130,16 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
   `).get(profile.id, topic.topic_id);
 
   if (post && ['READY_FOR_MANUAL_UPLOAD', 'MANUALLY_UPLOADED'].includes(post.status)) {
+    progress({ postId: post.id, status: 'SKIPPED', stage: 'COMPLETED', progress: 100 });
     return { topicId: topic.topic_id, title: topic.topic_title, status: 'skipped', postId: post.id };
   }
 
   // Approval is final. If Drive export previously failed, retry only the export step.
   if (post?.status === 'APPROVED') {
     try {
+      progress({ postId: post.id, status: 'RUNNING', stage: 'EXPORTING_DRIVE', progress: 90 });
       const exported = await exportPostToDrive(post.id);
+      progress({ postId: post.id, status: 'COMPLETED', stage: 'COMPLETED', progress: 100 });
       return {
         topicId: topic.topic_id,
         title: topic.topic_title,
@@ -116,6 +154,7 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
         title: topic.topic_title,
         error: error.message
       });
+      progress({ postId: post.id, status: 'FAILED', stage: 'EXPORTING_DRIVE', progress: 100, error: error.message });
       return { topicId: topic.topic_id, title: topic.topic_title, status: 'failed', postId: post.id, error: error.message };
     }
   }
@@ -123,6 +162,7 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
   // A user-created post is authoritative. Scheduled automation may publish it when ready,
   // but must never regenerate its caption or image.
   if (post && scheduledRun && post.creation_source === 'manual') {
+    progress({ postId: post.id, status: 'SKIPPED', stage: 'COMPLETED', progress: 100 });
     return { topicId: topic.topic_id, title: topic.topic_title, status: 'skipped', postId: post.id };
   }
 
@@ -140,6 +180,8 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
   }
 
   try {
+    throwIfCancelled(shouldCancel);
+    progress({ postId: post.id, status: 'RUNNING', stage: 'GENERATING_CAPTION', progress: 15 });
     const rule = getLatestPublishedRule(profile.id);
     if (!rule) throw new Error('Profile chưa có Rule được kích hoạt.');
 
@@ -150,6 +192,7 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
       rule.content_markdown,
       ''
     );
+    throwIfCancelled(shouldCancel);
     post = createNewRevision(post.id, {
       caption: caption.caption,
       headline: caption.headline,
@@ -158,21 +201,33 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
     });
 
     updatePostStatus(post.id, 'GENERATING');
+    progress({ postId: post.id, status: 'RUNNING', stage: 'PLANNING_IMAGES', progress: 40 });
     const imageInstruction = topic.image_rule
       ? `Chủ đề: ${topic.topic_title}. Quy tắc hình ảnh riêng cho bài này: ${topic.image_rule}`
       : (post.image_brief || caption.imageBrief || '');
     const referenceImages = await loadDriveImages(topic.source_image_drive_link);
+    throwIfCancelled(shouldCancel);
     const briefs = referenceImages.length
       ? referenceImages.map((source, index) => imageInstruction || `Tạo ảnh minh họa số ${index + 1} dựa sát trên ảnh nguồn này.`)
       : await planImageBriefs({ topic: topic.topic_title, caption: caption.caption, profileName: profile.name, ruleText: rule.content_markdown, customBrief: topic.image_rule || '' });
+    throwIfCancelled(shouldCancel);
     const imageSet = [];
     for (let index = 0; index < briefs.length; index++) {
+      throwIfCancelled(shouldCancel);
+      progress({
+        postId: post.id,
+        status: 'RUNNING',
+        stage: `GENERATING_IMAGE_${index + 1}_OF_${briefs.length}`,
+        progress: 45 + Math.round((index / Math.max(1, briefs.length)) * 35)
+      });
       const sources = referenceImages[index] ? [referenceImages[index]] : [];
       const image = await generateImage(topic.topic_title, profile.name, rule.content_markdown, briefs[index], sources);
+      throwIfCancelled(shouldCancel);
       image.imageData = await applyProfileLogo(image.imageData, profile.logo_data);
       image.imageData = await applyDriveFrame(image.imageData, topic.image_frame_drive_link);
       imageSet.push({ data: image.imageData, mime: 'image/png', brief: briefs[index], sourceFileId: sources[0]?.id || null });
     }
+    throwIfCancelled(shouldCancel);
     post = createNewRevision(post.id, {
       imageBrief: briefs.join('\n\n'),
       imageData: imageSet[0].data,
@@ -180,12 +235,15 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
       imageSet
     });
 
+    throwIfCancelled(shouldCancel);
+    progress({ postId: post.id, status: 'RUNNING', stage: 'EXPORTING_DRIVE', progress: 88 });
     approvePost(post.id, 'automation', { automated: true, source: 'CONTENT_PLAN' });
     const exported = await exportPostToDrive(post.id);
     writeAutomationSuccess('CONTENT_AUTOMATION_COMPLETED', 'post', post.id, {
       profileId: profile.id,
       title: topic.topic_title
     });
+    progress({ postId: post.id, status: 'COMPLETED', stage: 'COMPLETED', progress: 100 });
 
     return {
       topicId: topic.topic_id,
@@ -196,12 +254,17 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
     };
   } catch (error) {
     updatePostStatus(post.id, 'DRAFT');
+    if (error instanceof AutomationCancelledError) {
+      progress({ postId: post.id, status: 'CANCELLED', stage: 'CANCELLED', progress: 100, error: error.message });
+      return { topicId: topic.topic_id, title: topic.topic_title, status: 'cancelled', postId: post.id };
+    }
     writeAutomationError('CONTENT_GENERATION_FAILED', 'post', post.id, {
       profileId: profile.id,
       topicId: topic.topic_id,
       title: topic.topic_title,
       error: error.message
     });
+    progress({ postId: post.id, status: 'FAILED', stage: 'FAILED', progress: 100, error: error.message });
     return {
       topicId: topic.topic_id,
       title: topic.topic_title,
@@ -262,7 +325,7 @@ async function publishDuePosts(profile) {
   return results;
 }
 
-async function executeContentAutomation({ profileId = null, topicIds = null, scheduleOverrides = {}, scheduled = false } = {}) {
+async function executeContentAutomation({ profileId = null, topicIds = null, scheduleOverrides = {}, scheduled = false, onStart = null, onProgress = null, shouldCancel = null } = {}) {
   let profiles;
   if (profileId) {
     profiles = db.prepare('SELECT * FROM profiles WHERE id = ? AND active = 1').all(profileId);
@@ -292,9 +355,10 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
     throw new Error('Không có Content Profile đang hoạt động để xử lý.');
   }
 
-  const report = [];
+  const report = profiles.map(profile => ({ profileId: profile.id, synced: null, rule: null, topics: [], publishing: [] }));
+  const topicTasks = [];
   for (const profile of profiles) {
-    const profileResult = { profileId: profile.id, synced: null, rule: null, topics: [], publishing: [] };
+    const profileResult = report.find(item => item.profileId === profile.id);
     try {
       profileResult.rule = await syncRulesFromDrive(profile);
       if (!profile.sheet_id_topics) throw new Error('Chưa cấu hình Google Sheet CONTENT_PLAN.');
@@ -307,8 +371,6 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
       const topicParams = [profile.id];
       if (Array.isArray(topicIds)) {
         if (topicIds.length === 0) {
-          profileResult.topics = [];
-          report.push(profileResult);
           continue;
         }
         topicQuery += ` AND id IN (${topicIds.map(() => '?').join(', ')})`;
@@ -316,14 +378,44 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
       }
       topicQuery += ' ORDER BY content_date ASC, publish_time ASC, topic_id ASC';
       const topics = db.prepare(topicQuery).all(...topicParams);
-
-      for (const topic of topics) {
-        profileResult.topics.push(await processTopic(profile, topic, scheduleOverrides[topic.id] || null, scheduled));
-      }
+      topics.forEach(topic => topicTasks.push({ profile, profileResult, topic }));
     } catch (error) {
       profileResult.error = error.message;
       writeAutomationError('AUTOMATION_PROFILE_FAILED', 'profile', profile.id, { error: error.message });
     }
+  }
+
+  const workerCount = getAutomationWorkerCount(topicTasks.length);
+  onStart?.({ workerCount, taskCount: topicTasks.length });
+  const topicResults = await runWorkerPool(topicTasks, workerCount, async ({ profile, topic }, index, workerNumber) => {
+    const progress = update => onProgress?.({ topicId: topic.id, workerNumber, ...update });
+    if (shouldCancel?.()) {
+      progress({ status: 'CANCELLED', stage: 'CANCELLED', progress: 100, error: 'Tác vụ tạo bài đã được hủy.' });
+      return { topicId: topic.topic_id, title: topic.topic_title, status: 'cancelled' };
+    }
+    progress({ status: 'RUNNING', stage: 'PREPARING', progress: 5 });
+    try {
+      return await processTopic(profile, topic, scheduleOverrides[topic.id] || null, scheduled, progress, shouldCancel);
+    } catch (error) {
+      if (error instanceof AutomationCancelledError) {
+        progress({ status: 'CANCELLED', stage: 'CANCELLED', progress: 100, error: error.message });
+        return { topicId: topic.topic_id, title: topic.topic_title, status: 'cancelled' };
+      }
+      writeAutomationError('CONTENT_WORKER_FAILED', 'topic', topic.id, {
+        profileId: profile.id,
+        topicId: topic.topic_id,
+        title: topic.topic_title,
+        error: error.message
+      });
+      progress({ status: 'FAILED', stage: 'FAILED', progress: 100, error: error.message });
+      return { topicId: topic.topic_id, title: topic.topic_title, status: 'failed', error: error.message };
+    }
+  });
+  topicTasks.forEach((task, index) => task.profileResult.topics.push(topicResults[index]));
+
+  for (let index = 0; index < profiles.length; index++) {
+    const profile = profiles[index];
+    const profileResult = report[index];
     if (scheduled && profile.workflow_mode === 'auto') {
       try {
         profileResult.publishing = await publishDuePosts(profile);
@@ -331,7 +423,6 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
         profileResult.publishError = error.message;
       }
     }
-    report.push(profileResult);
   }
 
   const allTopics = report.flatMap(item => item.topics);
@@ -341,10 +432,12 @@ async function executeContentAutomation({ profileId = null, topicIds = null, sch
     profiles: report,
     summary: {
       profiles: report.length,
+      workers: workerCount,
       profileErrors: report.filter(item => item.error || item.publishError).length,
       exported: allTopics.filter(item => item.status === 'exported').length,
       skipped: allTopics.filter(item => item.status === 'skipped').length,
       failed: allTopics.filter(item => item.status === 'failed').length,
+      cancelled: allTopics.filter(item => item.status === 'cancelled').length,
       published: allPublishing.filter(item => item.success).length,
       publishFailed: allPublishing.filter(item => !item.success).length
     }
@@ -357,4 +450,8 @@ export function runContentAutomation(options = {}) {
     activeRun = null;
   });
   return activeRun;
+}
+
+export function isContentAutomationRunning() {
+  return Boolean(activeRun);
 }

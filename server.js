@@ -18,7 +18,18 @@ import { generateImage, planImageBriefs } from './src/ai/image.js';
 import { approvePost, requestChanges } from './src/review/approval.js';
 import { exportPostToDrive, isPostExporting } from './src/google/export.js';
 import { markManuallyUploaded, markManyManuallyUploaded } from './src/manual_upload.js';
-import { runContentAutomation, syncRulesFromDrive } from './src/automation.js';
+import { runContentAutomation, syncRulesFromDrive, isContentAutomationRunning } from './src/automation.js';
+import {
+  createAutomationJob,
+  finishAutomationJob,
+  getAutomationJob,
+  listAutomationJobs,
+  recoverInterruptedJobs,
+  requestAutomationJobCancellation,
+  isAutomationJobCancellationRequested,
+  startAutomationJob,
+  updateAutomationJobItem
+} from './src/automation-jobs.js';
 import { testMetaConnection, publishPostToFacebook } from './src/meta.js';
 import { getAppSettings, saveAppSettings } from './src/settings.js';
 import { applyProfileLogo } from './src/image/logo.js';
@@ -32,6 +43,7 @@ const APP_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.jso
 
 // Initialize database schema and seeds
 initDb();
+recoverInterruptedJobs();
 const mediaMigration = migrateBase64Media(db);
 if (mediaMigration.revisions || mediaMigration.profiles) {
   console.log(`[Media] Đã chuyển ${mediaMigration.revisions} ảnh bài viết và ${mediaMigration.profiles} logo ra thư mục AppData.`);
@@ -47,7 +59,10 @@ const MIME_TYPES = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon'
+  '.ico': 'image/x-icon',
+  '.ttf': 'font/ttf',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2'
 };
 
 function sendJson(res, statusCode, data) {
@@ -197,7 +212,7 @@ const server = http.createServer(async (req, res) => {
             scheduler: {
               configured: config.automation.enabled,
               detail: config.automation.enabled
-                ? `Tự động quét Sheet mỗi ${config.automation.intervalMinutes} phút · Múi giờ ${config.timezone}`
+                ? `Tự động quét Sheet mỗi ${config.automation.intervalMinutes} phút · ${Math.min(config.automation.minWorkers, config.automation.maxWorkers)}–${Math.max(config.automation.minWorkers, config.automation.maxWorkers)} worker · Múi giờ ${config.timezone}`
                 : 'Đã tắt AUTOMATION_ENABLED'
             }
           }
@@ -430,6 +445,26 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { success: true, id: topicId, preservedPosts: linkedPosts });
       }
 
+      if (pathname === '/api/automation/jobs' && req.method === 'GET') {
+        const active = parsedUrl.searchParams.get('active') === 'true';
+        const limit = Number(parsedUrl.searchParams.get('limit') || 20);
+        return sendJson(res, 200, { success: true, jobs: listAutomationJobs({ active, limit }) });
+      }
+
+      const automationCancelMatch = pathname.match(/^\/api\/automation\/jobs\/([^/]+)\/cancel$/);
+      if (automationCancelMatch && req.method === 'POST') {
+        const job = requestAutomationJobCancellation(decodeURIComponent(automationCancelMatch[1]));
+        if (!job) return sendJson(res, 404, { success: false, error: 'Không tìm thấy tác vụ tạo bài.' });
+        return sendJson(res, 202, { success: true, job });
+      }
+
+      const automationJobMatch = pathname.match(/^\/api\/automation\/jobs\/([^/]+)$/);
+      if (automationJobMatch && req.method === 'GET') {
+        const job = getAutomationJob(decodeURIComponent(automationJobMatch[1]));
+        if (!job) return sendJson(res, 404, { success: false, error: 'Không tìm thấy tác vụ tạo bài.' });
+        return sendJson(res, 200, { success: true, job });
+      }
+
       // 8.2 Fully automated Sheet -> Rule -> Caption -> Image -> Drive pipeline
       if (pathname === '/api/automation/run' && req.method === 'POST') {
         const body = await parseBody(req);
@@ -439,11 +474,28 @@ const server = http.createServer(async (req, res) => {
         if (Array.isArray(topicIds) && topicIds.length === 0) {
           return sendJson(res, 400, { success: false, error: 'Hãy chọn ít nhất một lịch từ Sheet để tạo bài.' });
         }
+        if (!Array.isArray(topicIds)) {
+          return sendJson(res, 400, { success: false, error: 'Luồng chạy thủ công cần danh sách lịch tạo bài.' });
+        }
+        if (isContentAutomationRunning()) {
+          return sendJson(res, 409, { success: false, error: 'Một tác vụ tạo bài khác đang chạy. Vui lòng chờ tác vụ hiện tại hoàn tất.' });
+        }
         const scheduleOverrides = body.scheduleOverrides && typeof body.scheduleOverrides === 'object'
           ? body.scheduleOverrides
           : {};
-        const result = await runContentAutomation({ profileId: body.profileId || null, topicIds, scheduleOverrides });
-        return sendJson(res, result.success ? 200 : 207, result);
+        const job = createAutomationJob(topicIds);
+        const execution = runContentAutomation({
+          profileId: body.profileId || null,
+          topicIds,
+          scheduleOverrides,
+          onStart: ({ workerCount }) => startAutomationJob(job.id, workerCount),
+          onProgress: update => updateAutomationJobItem(job.id, update.topicId, update),
+          shouldCancel: () => isAutomationJobCancellationRequested(job.id)
+        });
+        execution
+          .then(result => finishAutomationJob(job.id, result))
+          .catch(error => finishAutomationJob(job.id, null, error));
+        return sendJson(res, 202, { success: true, job: getAutomationJob(job.id) });
       }
 
       // 9. Posts List / Create
