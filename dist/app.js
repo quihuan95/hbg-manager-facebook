@@ -90,6 +90,20 @@ function initializeButtonFeedback() {
 
 initializeButtonFeedback();
 
+document.addEventListener('pointerdown', event => {
+  if (event.target.closest('.action-menu')) return;
+  document.querySelectorAll('.action-menu.is-open').forEach(menu => {
+    menu.classList.remove('is-open');
+    menu.querySelector('.action-menu-trigger')?.setAttribute('aria-expanded', 'false');
+  });
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') document.querySelectorAll('.action-menu.is-open').forEach(menu => {
+    menu.classList.remove('is-open');
+    menu.querySelector('.action-menu-trigger')?.setAttribute('aria-expanded', 'false');
+  });
+});
+
 function googleSheetUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -170,7 +184,7 @@ function automationStatusTag(item) {
 }
 
 async function pollAutomationStatus() {
-  if (automationPollBusy || document.hidden || trackedAutomationJobs.size) return;
+  if (automationPollBusy || document.hidden || trackedAutomationJobs.size || document.querySelector('.action-menu.is-open')) return;
   const route = getRoute();
   if (!['create_posts', 'created_posts', 'publishing'].includes(route)) return;
   automationPollBusy = true;
@@ -573,19 +587,27 @@ async function renderQueue() {
                   </td>
                   <td>${esc(j.content_date)} <small>${esc(j.scheduled_time || '09:00')} · GMT+7</small></td>
                   <td>${activeItem ? automationStatusTag(activeItem) : badge(j.status)}</td>
-                  <td><div class="row-actions">
-                    ${queueMode === 'publishing' && ['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(j.status)
-                      ? `<button data-publish="${j.id}" class="primary" title="Đăng bài lên Facebook">${icon('send')}Đăng</button>`
-                      : queueMode === 'publishing' && j.status === 'MANUALLY_UPLOADED'
-                        ? `<button data-publish="${j.id}" title="Đăng lại lên Facebook" style="border:1px solid #1877f2;color:#1877f2;background:#f0f7ff;font-weight:600">${icon('refresh-cw')}Đăng lại</button>`
+                  <td>${queueMode === 'publishing' ? `<div class="publishing-row-actions">
+                    ${['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(j.status)
+                      ? `<button data-publish="${j.id}" class="primary" title="Đăng bài lên Facebook">${icon('send')}Đăng bài</button>`
+                      : j.status === 'MANUALLY_UPLOADED'
+                        ? `<button data-publish="${j.id}" title="Đăng lại lên Facebook">${icon('refresh-cw')}Đăng lại</button>`
                         : ''}
-                    <button data-open="${j.id}" title="Mở bài trong Studio" class="${queueMode === 'created_posts' ? 'primary' : ''}">
-                      ${queueMode === 'publishing' ? 'Xem nội dung' : `${icon('pencil')}Mở / sửa`}
-                    </button>
-                    ${queueMode === 'publishing' && j.manual_post_url ? `<a class="button compact" href="${esc(j.manual_post_url)}" target="_blank" rel="noopener noreferrer" title="Xem bài trên Facebook">${icon('external-link')}Xem bài</a>` : ''}
-                    ${queueMode === 'publishing' && j.manual_post_url ? `<button data-copy-post-link="${esc(j.manual_post_url)}" title="Sao chép link bài Facebook">${icon('copy')}Copy link</button>` : ''}
-                    ${queueMode === 'created_posts' ? `<button data-delete="${j.id}" class="icon-button" title="Xóa bài" aria-label="Xóa bài">${icon('trash-2')}</button>` : ''}
-                  </div></td>
+                    <button data-open="${j.id}" title="Mở bài trong Studio">${icon('file-search')}Xem nội dung</button>
+                    ${j.manual_post_url ? `
+                      <div class="action-menu">
+                        <button type="button" class="action-menu-trigger" title="Thao tác khác" aria-label="Mở menu thao tác khác" aria-expanded="false">${icon('more-vertical')}</button>
+                        <div class="action-menu-popover">
+                          <a class="action-menu-item" href="${esc(j.manual_post_url)}" target="_blank" rel="noopener noreferrer">${icon('external-link')}Xem trên Facebook</a>
+                          <button data-copy-post-link="${esc(j.manual_post_url)}" class="action-menu-item">${icon('copy')}Copy link</button>
+                        </div>
+                      </div>
+                    ` : ''}
+                  </div>
+                  ` : `<div class="row-actions">
+                    <button data-open="${j.id}" title="Mở bài trong Studio" class="primary">${icon('pencil')}Mở / sửa</button>
+                    <button data-delete="${j.id}" class="icon-button" title="Xóa bài" aria-label="Xóa bài">${icon('trash-2')}</button>
+                  </div>`}</td>
                 </tr>
               `;
             }).join('') || `<tr><td colspan="6" class="empty">${queueMode === 'publishing'
@@ -725,6 +747,37 @@ async function renderQueue() {
       toast(`Lỗi xóa bài: ${err.message}`, true);
     }
   };
+
+  document.querySelectorAll('.action-menu').forEach(menu => {
+    const trigger = menu.querySelector('.action-menu-trigger');
+    const toggleMenu = () => {
+      const willOpen = !menu.classList.contains('is-open');
+      document.querySelectorAll('.action-menu.is-open').forEach(other => {
+        if (other !== menu) {
+          other.classList.remove('is-open');
+          other.querySelector('.action-menu-trigger')?.setAttribute('aria-expanded', 'false');
+        }
+      });
+      menu.classList.toggle('is-open', willOpen);
+      trigger.setAttribute('aria-expanded', String(willOpen));
+    };
+    trigger.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleMenu();
+    };
+    trigger.onclick = event => {
+      event.stopPropagation();
+      if (event.detail === 0) toggleMenu();
+    };
+    menu.onclick = event => {
+      if (event.target.closest('.action-menu-item')) setTimeout(() => {
+        menu.classList.remove('is-open');
+        trigger.setAttribute('aria-expanded', 'false');
+      }, 0);
+    };
+  });
 
   document.querySelectorAll('[data-open]').forEach(b => {
     b.onclick = () => {
@@ -1067,10 +1120,13 @@ async function renderStudio() {
   if (!studioImages.length && post.image_data) studioImages = [{ data: post.image_data, mime: post.image_mime || 'image/png', brief: post.image_brief || '' }];
 
   $('#view').innerHTML = `
-    <button class="back" id="back">‹ Quay lại Tạo bài</button>
+    <div class="studio-topbar">
+      <button class="back" id="back">‹ Quay lại Tạo bài</button>
+      <button class="danger" id="deleteStudioPost">${icon('trash-2')}Xóa bài</button>
+    </div>
 
     ${isReadyForManual ? `
-      <div class="notice" style="background:#eaf8ef;border-color:#bce5ca;color:#185a31">
+      <div class="notice ready-notice">
         <strong>✅ Bộ bài đã được xuất an toàn lên Google Drive!</strong>
         Bài viết đang sẵn sàng để đăng lên Fanpage.
       </div>
@@ -1090,7 +1146,7 @@ async function renderStudio() {
     ` : ''}
 
     ${canPublish || isUploaded ? `
-      <section class="panel" style="border: 2px solid #367260; background:#fbfdfc">
+      <section class="panel publishing-panel">
         <div class="panelhead">
           <h2>${icon('send')}Vận hành Đăng bài (Publishing Studio)</h2>
           <span class="tag published">${isUploaded ? 'Đã hoàn tất đăng' : 'Sẵn sàng đăng'}</span>
@@ -1099,7 +1155,7 @@ async function renderStudio() {
           <button id="autoPublishFb" class="primary" style="background:#1877f2;border-color:#1877f2;color:white">
             ${icon(isUploaded ? 'refresh-cw' : 'send')}${isUploaded ? 'Đăng lại lên Facebook' : 'Tự động đăng lên Facebook'}
           </button>
-          ${post.drive_folder_id ? `<a href="https://drive.google.com/drive/folders/${esc(post.drive_folder_id)}" target="_blank" class="button" style="padding:10px 16px;text-decoration:none;border:1px solid var(--line);border-radius:8px;background:white;color:#273957;font-weight:600">${icon('folder-open')}Mở thư mục bài trên Drive</a>` : ''}
+          ${post.drive_folder_id ? `<a href="https://drive.google.com/drive/folders/${esc(post.drive_folder_id)}" target="_blank" class="button publishing-drive-link">${icon('folder-open')}Mở thư mục bài trên Drive</a>` : ''}
           <button id="markUploaded">${isUploaded ? 'Đánh dấu đã đăng lại thủ công' : 'Đánh dấu đã đăng thủ công'}</button>
           ${isUploaded ? `
             <div style="font-size:14px;color:#2b6b52;padding:10px 0;width:100%">
@@ -1216,6 +1272,24 @@ async function renderStudio() {
   `;
 
   $('#back').onclick = () => goto(studioReturnRoute);
+  $('#deleteStudioPost').onclick = async () => {
+    if (!confirm(`Xóa bài “${post.topic_title || post.id}”?`)) return;
+    const button = $('#deleteStudioPost');
+    button.disabled = true;
+    button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span>Đang xóa...`;
+    try {
+      await api(`/api/posts/${encodeURIComponent(post.id)}`, { method: 'DELETE' });
+      currentPostId = null;
+      getCache.clear();
+      toast('Đã xóa bài khỏi danh sách.');
+      goto('created_posts');
+    } catch (error) {
+      toast(`Lỗi xóa bài: ${error.message}`, true);
+      button.disabled = false;
+      button.innerHTML = `${icon('trash-2')}Xóa bài`;
+      renderIcons();
+    }
+  };
 
   // AI Caption
   $('#aiCaption').onclick = async () => {
