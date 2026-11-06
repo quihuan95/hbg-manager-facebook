@@ -3258,6 +3258,13 @@ html[data-theme="dark"] textarea:focus { background: rgba(19,25,44,0.90); }
 
 html[data-theme="dark"] th { color: #9ea9c2; background: rgba(13,18,34,0.70); }
 html[data-theme="dark"] tbody tr:hover { background: rgba(91,82,237,0.08); }
+html[data-theme="dark"] tr.automation-running,
+html[data-theme="dark"] tr.automation-running:hover {
+  background: rgba(72,65,154,0.14);
+}
+html[data-theme="dark"] tr.automation-running td {
+  border-bottom-color: rgba(255,255,255,0.09);
+}
 html[data-theme="dark"] .tag { border-color: rgba(255,255,255,0.10); }
 html[data-theme="dark"] .automation-job-summary,
 html[data-theme="dark"] .notice,
