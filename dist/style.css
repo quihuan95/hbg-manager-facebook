@@ -1402,7 +1402,7 @@ dialog::backdrop {
 }
 .topic-queue-table th:nth-child(6),
 .topic-queue-table td:nth-child(6) {
-  width: 130px;
+  width: 160px;
 }
 .profile-cell,
 .schedule-cell,

@@ -51,26 +51,6 @@ function initializeThemeToggle() {
 initializeThemeToggle();
 
 function initializeButtonFeedback() {
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-
-  document.addEventListener('pointerdown', event => {
-    if (reducedMotion.matches || event.button !== 0) return;
-    const button = event.target.closest('button, a.button');
-    if (!button || button.closest('.window-controls') || button.disabled || button.getAttribute('aria-disabled') === 'true') return;
-
-    const bounds = button.getBoundingClientRect();
-    const ripple = document.createElement('span');
-    const diameter = Math.hypot(bounds.width, bounds.height) * 2;
-    ripple.className = 'button-ripple';
-    ripple.setAttribute('aria-hidden', 'true');
-    ripple.style.left = `${event.clientX - bounds.left}px`;
-    ripple.style.top = `${event.clientY - bounds.top}px`;
-    ripple.style.setProperty('--ripple-scale', Math.max(8, diameter / 12).toFixed(2));
-    button.querySelector('.button-ripple')?.remove();
-    button.appendChild(ripple);
-    ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
-  });
-
   document.addEventListener('keydown', event => {
     if (event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;
     const button = event.target.closest('button, a.button');
@@ -89,6 +69,52 @@ function initializeButtonFeedback() {
 }
 
 initializeButtonFeedback();
+
+let controlInteractionLockUntil = 0;
+document.addEventListener('pointerdown', event => {
+  if (event.target.closest('button, a, input, select, textarea, summary, [role="button"]')) {
+    controlInteractionLockUntil = Date.now() + 1500;
+  }
+}, true);
+document.addEventListener('pointerup', () => {
+  controlInteractionLockUntil = Math.max(controlInteractionLockUntil, Date.now() + 500);
+}, true);
+
+const instantActionSelector = [
+  '[data-delete]',
+  '[data-delete-profile]',
+  '[data-delete-rules]',
+  '[data-publish]',
+  '[data-edit]',
+  '[data-rule]',
+  '[data-open]',
+  '#deleteStudioPost',
+  '#deleteSelectedPosts',
+  '#publishSelectedPosts',
+  '#autoPublishFb',
+  '#markUploaded',
+  '#saveCaption',
+  '#generateSelected'
+].join(',');
+const instantPointerActions = new WeakSet();
+
+document.addEventListener('pointerdown', event => {
+  if (event.button !== 0) return;
+  const control = event.target.closest(instantActionSelector);
+  if (!control || control.disabled || control.getAttribute('aria-disabled') === 'true') return;
+  event.preventDefault();
+  instantPointerActions.add(control);
+  control.click();
+  setTimeout(() => instantPointerActions.delete(control), 800);
+}, true);
+
+document.addEventListener('click', event => {
+  const control = event.target.closest(instantActionSelector);
+  if (!event.isTrusted || !control || !instantPointerActions.has(control)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  instantPointerActions.delete(control);
+}, true);
 
 document.addEventListener('pointerdown', event => {
   if (event.target.closest('.action-menu')) return;
@@ -184,14 +210,14 @@ function automationStatusTag(item) {
 }
 
 async function pollAutomationStatus() {
-  if (automationPollBusy || document.hidden || trackedAutomationJobs.size || document.querySelector('.action-menu.is-open')) return;
+  if (automationPollBusy || document.hidden || trackedAutomationJobs.size || Date.now() < controlInteractionLockUntil || document.querySelector('.action-menu.is-open')) return;
   const route = getRoute();
   if (!['create_posts', 'created_posts', 'publishing'].includes(route)) return;
   automationPollBusy = true;
   try {
     const result = await api(`/api/automation/jobs?active=true&_=${Date.now()}`);
     const hasActive = Boolean(result.jobs?.length);
-    if (hasActive || automationJobsWereActive) await renderQueue();
+    if ((hasActive || automationJobsWereActive) && Date.now() >= controlInteractionLockUntil && !document.querySelector('.action-menu.is-open')) await renderQueue();
     automationJobsWereActive = hasActive;
   } catch {
     // Polling must not interrupt the current screen.
@@ -658,9 +684,9 @@ async function renderQueue() {
   });
 
   document.querySelectorAll('[data-create-topic]').forEach(button => {
-    button.onclick = () => {
+    const createTopic = () => {
       const topic = syncedTopics.find(item => item.id === button.dataset.createTopic);
-      if (!topic) return;
+      if (!topic || button.disabled) return;
       const hasDate = /^\d{4}-\d{2}-\d{2}$/.test(topic.content_date || '');
       const hasTime = Boolean(topic.publish_time);
       if (hasDate && hasTime) {
@@ -679,10 +705,19 @@ async function renderQueue() {
         });
       });
     };
+    button.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      createTopic();
+    };
+    button.onclick = event => {
+      if (event.detail === 0) createTopic();
+    };
   });
 
   document.querySelectorAll('[data-delete-topic]').forEach(button => {
-    button.onclick = async () => {
+    const deleteTopic = async () => {
+      if (button.disabled) return;
       const topic = syncedTopics.find(item => item.id === button.dataset.deleteTopic);
       const hasPost = Boolean(topic?.post_id);
       const warning = hasPost
@@ -698,6 +733,14 @@ async function renderQueue() {
       } catch (err) {
         toast(`Lỗi xóa lịch: ${err.message}`, true);
       }
+    };
+    button.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      deleteTopic();
+    };
+    button.onclick = event => {
+      if (event.detail === 0) deleteTopic();
     };
   });
 
