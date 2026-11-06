@@ -1388,17 +1388,21 @@ dialog::backdrop {
   width: 40px;
   text-align: center;
 }
+.topic-queue-table th:nth-child(2),
+.topic-queue-table td:nth-child(2) {
+  width: 44%;
+}
 .topic-queue-table th:nth-child(3),
 .topic-queue-table td:nth-child(3) {
-  width: 126px;
+  width: 150px;
 }
 .topic-queue-table th:nth-child(4),
 .topic-queue-table td:nth-child(4) {
-  width: 100px;
+  width: 120px;
 }
 .topic-queue-table th:nth-child(5),
 .topic-queue-table td:nth-child(5) {
-  width: 200px;
+  width: 140px;
 }
 .topic-queue-table th:nth-child(6),
 .topic-queue-table td:nth-child(6) {
@@ -1498,10 +1502,18 @@ dialog::backdrop {
   white-space: nowrap;
 }
 .publishing-row-actions > button:not(.action-menu-trigger) {
+  display: inline-flex;
   min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding: 5px 8px;
   font-size: 12px;
+  line-height: 1;
   white-space: nowrap;
+}
+.publishing-row-actions > button:not(.action-menu-trigger) [data-lucide] {
+  margin-right: 0;
 }
 .publishing-row-actions .action-menu { flex: 0 0 auto; }
 .action-menu .action-menu-trigger {
@@ -3437,4 +3449,51 @@ select {
 
 html[data-theme="dark"] select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23dce3f5' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+}
+
+/* Performance profile: preserve glass hierarchy without blurring every control. */
+body { background-attachment: scroll; }
+
+aside {
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  backdrop-filter: blur(22px) saturate(140%);
+}
+header {
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+}
+.toolbar {
+  -webkit-backdrop-filter: blur(9px) saturate(125%);
+  backdrop-filter: blur(9px) saturate(125%);
+}
+.panel,
+.card,
+.stat,
+button,
+.button,
+.header-refresh,
+input,
+select,
+textarea,
+.automation-job-summary,
+.notice,
+.warning,
+.switch-setting,
+.rule-details,
+.ruletext,
+.image-rule-note {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.panel,
+.card,
+.stat {
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+button,
+.button,
+input,
+select,
+textarea {
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease, transform 120ms ease;
 }

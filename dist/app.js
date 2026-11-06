@@ -80,42 +80,6 @@ document.addEventListener('pointerup', () => {
   controlInteractionLockUntil = Math.max(controlInteractionLockUntil, Date.now() + 500);
 }, true);
 
-const instantActionSelector = [
-  '[data-delete]',
-  '[data-delete-profile]',
-  '[data-delete-rules]',
-  '[data-publish]',
-  '[data-edit]',
-  '[data-rule]',
-  '[data-open]',
-  '#deleteStudioPost',
-  '#deleteSelectedPosts',
-  '#publishSelectedPosts',
-  '#autoPublishFb',
-  '#markUploaded',
-  '#saveCaption',
-  '#generateSelected'
-].join(',');
-const instantPointerActions = new WeakSet();
-
-document.addEventListener('pointerdown', event => {
-  if (event.button !== 0) return;
-  const control = event.target.closest(instantActionSelector);
-  if (!control || control.disabled || control.getAttribute('aria-disabled') === 'true') return;
-  event.preventDefault();
-  instantPointerActions.add(control);
-  control.click();
-  setTimeout(() => instantPointerActions.delete(control), 800);
-}, true);
-
-document.addEventListener('click', event => {
-  const control = event.target.closest(instantActionSelector);
-  if (!event.isTrusted || !control || !instantPointerActions.has(control)) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  instantPointerActions.delete(control);
-}, true);
-
 document.addEventListener('pointerdown', event => {
   if (event.target.closest('.action-menu')) return;
   document.querySelectorAll('.action-menu.is-open').forEach(menu => {
@@ -147,11 +111,11 @@ function facebookPageUrl(value) {
 
 const labels = {
   DRAFT: 'Nháp',
-  GENERATING: 'Đang tạo AI...',
+  GENERATING: 'Đang tạo',
   NEEDS_REVIEW: 'Chờ duyệt',
   APPROVED: 'Đã duyệt',
-  READY_FOR_MANUAL_UPLOAD: 'Sẵn sàng đăng',
-  MANUALLY_UPLOADED: 'Đã đăng xong',
+  READY_FOR_MANUAL_UPLOAD: 'Sẵn sàng',
+  MANUALLY_UPLOADED: 'Đã đăng',
   ARCHIVED: 'Đã lưu trữ'
 };
 
@@ -189,11 +153,10 @@ function automationStageText(item) {
   if (stage === 'QUEUED') return 'Đang chờ worker';
   if (stage === 'PREPARING') return 'Đang chuẩn bị';
   if (stage === 'VALIDATING') return 'Đang kiểm tra dữ liệu';
-  if (stage === 'GENERATING_CAPTION') return 'Đang tạo caption';
-  if (stage === 'PLANNING_IMAGES') return 'Đang lên kế hoạch ảnh';
+  if (stage === 'GENERATING_CAPTION') return 'Đang tạo';
+  if (stage === 'PLANNING_IMAGES') return 'Đang tạo';
   if (stage.startsWith('GENERATING_IMAGE_')) {
-    const match = stage.match(/GENERATING_IMAGE_(\d+)_OF_(\d+)/);
-    return match ? `Đang tạo ảnh ${match[1]}/${match[2]}` : 'Đang tạo ảnh';
+    return 'Đang tạo';
   }
   if (stage === 'EXPORTING_DRIVE') return 'Đang xuất Google Drive';
   if (stage === 'CANCELLED' || item?.status === 'CANCELLED') return 'Đã hủy';
@@ -209,6 +172,32 @@ function automationStatusTag(item) {
   return `<span class="tag ${terminalClass}" title="${esc(item.error_message || '')}">${esc(automationStageText(item))}${worker} · ${Number(item.progress || 0)}%</span>`;
 }
 
+function updateAutomationUiInPlace(jobs) {
+  const items = jobs.flatMap(job => job.items || []);
+  items.forEach(item => {
+    const topicRow = item.topic_id ? document.querySelector(`[data-topic-row="${CSS.escape(item.topic_id)}"]`) : null;
+    const postRow = item.post_id ? document.querySelector(`[data-post-row="${CSS.escape(item.post_id)}"]`) : null;
+    [topicRow, postRow].forEach(row => {
+      const statusCell = row?.querySelector('.status-cell');
+      if (statusCell) statusCell.innerHTML = automationStatusTag(item);
+    });
+  });
+
+  jobs.forEach(job => {
+    const monitor = document.querySelector(`[data-automation-job="${CSS.escape(job.id)}"]`);
+    if (!monitor) return;
+    const progress = job.items?.length
+      ? Math.round(job.items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / job.items.length)
+      : 0;
+    const title = monitor.querySelector('[data-job-title]');
+    const meta = monitor.querySelector('[data-job-meta]');
+    const progressBar = monitor.querySelector('progress');
+    if (title) title.textContent = `Đang tạo ${job.completed_items || 0}/${job.total_items} bài`;
+    if (meta) meta.textContent = `${job.worker_count || '—'} worker · ${progress}%`;
+    if (progressBar) progressBar.value = progress;
+  });
+}
+
 async function pollAutomationStatus() {
   if (automationPollBusy || document.hidden || trackedAutomationJobs.size || Date.now() < controlInteractionLockUntil || document.querySelector('.action-menu.is-open')) return;
   const route = getRoute();
@@ -217,7 +206,8 @@ async function pollAutomationStatus() {
   try {
     const result = await api(`/api/automation/jobs?active=true&_=${Date.now()}`);
     const hasActive = Boolean(result.jobs?.length);
-    if ((hasActive || automationJobsWereActive) && Date.now() >= controlInteractionLockUntil && !document.querySelector('.action-menu.is-open')) await renderQueue();
+    if (hasActive) updateAutomationUiInPlace(result.jobs || []);
+    else if (automationJobsWereActive && Date.now() >= controlInteractionLockUntil && !document.querySelector('.action-menu.is-open')) await renderQueue();
     automationJobsWereActive = hasActive;
   } catch {
     // Polling must not interrupt the current screen.
@@ -226,9 +216,9 @@ async function pollAutomationStatus() {
   }
 }
 
-function renderIcons() {
+function renderIcons(root = document) {
   if (!window.lucide) return;
-  window.lucide.createIcons({ attrs: { 'aria-hidden': 'true', 'stroke-width': 1.8 } });
+  window.lucide.createIcons({ root, attrs: { 'aria-hidden': 'true', 'stroke-width': 1.8 } });
 }
 
 function icon(name) {
@@ -261,20 +251,37 @@ function initializePageRefresh() {
 
 initializePageRefresh();
 
+let iconRenderFrame = 0;
+const pendingIconRoots = new Set();
 const iconObserver = new MutationObserver(mutations => {
-  if (mutations.some(mutation => [...mutation.addedNodes].some(node =>
-    node.nodeType === 1 && (node.matches?.('[data-lucide]') || node.querySelector?.('[data-lucide]'))))) {
-    requestAnimationFrame(renderIcons);
-  }
+  mutations.forEach(mutation => [...mutation.addedNodes].forEach(node => {
+    if (node.nodeType !== 1) return;
+    if (node.matches?.('i[data-lucide]')) pendingIconRoots.add(node.parentElement || mutation.target);
+    else if (node.querySelector?.('i[data-lucide]')) pendingIconRoots.add(node);
+  }));
+  if (!pendingIconRoots.size) return;
+  cancelAnimationFrame(iconRenderFrame);
+  iconRenderFrame = requestAnimationFrame(() => {
+    pendingIconRoots.forEach(root => root?.isConnected && renderIcons(root));
+    pendingIconRoots.clear();
+  });
 });
 iconObserver.observe(document.body, { childList: true, subtree: true });
 
 let simplebarRefreshFrame = 0;
-function refreshSimplebars() {
+const pendingSimplebarRoots = new Set();
+function refreshSimplebars(root = document) {
   if (!window.SimpleBar) return;
+  pendingSimplebarRoots.add(root);
   cancelAnimationFrame(simplebarRefreshFrame);
   simplebarRefreshFrame = requestAnimationFrame(() => {
-    document.querySelectorAll('[data-simplebar]').forEach(element => {
+    const elements = new Set();
+    pendingSimplebarRoots.forEach(scope => {
+      if (scope?.matches?.('[data-simplebar]')) elements.add(scope);
+      scope?.querySelectorAll?.('[data-simplebar]').forEach(element => elements.add(element));
+    });
+    pendingSimplebarRoots.clear();
+    elements.forEach(element => {
       const instance = window.SimpleBar.instances?.get(element)
         || new window.SimpleBar(element, { autoHide: false });
       instance.recalculate();
@@ -282,10 +289,12 @@ function refreshSimplebars() {
   });
 }
 
-const simplebarObserver = new MutationObserver(refreshSimplebars);
+const simplebarObserver = new MutationObserver(mutations => {
+  mutations.forEach(mutation => refreshSimplebars(mutation.target));
+});
 ['#view', '#nav', '#modalBody'].forEach(selector => {
   const element = $(selector);
-  if (element) simplebarObserver.observe(element, { childList: true, subtree: true });
+  if (element) simplebarObserver.observe(element, { childList: true });
 });
 refreshSimplebars();
 
@@ -495,7 +504,7 @@ async function renderQueue() {
       ${[
         [publishingCount, 'Trong luồng đăng', 'Chỉ gồm bài đã duyệt và đã đăng'],
         [approvedCount, 'Đã duyệt', 'Đủ điều kiện chuyển sang đăng bài'],
-        [readyCount, 'Sẵn sàng đăng', 'Đang chờ đăng theo chế độ Profile'],
+        [readyCount, 'Sẵn sàng', 'Đang chờ đăng theo chế độ Profile'],
         [uploadedCount, 'Đã đăng hoàn tất', 'Đã lưu vết kiểm toán']
       ].map(x => `
         <div class="stat">
@@ -522,11 +531,11 @@ async function renderQueue() {
           const progress = job.items?.length
             ? Math.round(job.items.reduce((sum, item) => sum + Number(item.progress || 0), 0) / job.items.length)
             : 0;
-          return `<div class="automation-job-summary">
+          return `<div class="automation-job-summary" data-automation-job="${esc(job.id)}">
             <div>
               <span class="button-spinner" aria-hidden="true"></span>
-              <strong>Đang tạo ${job.completed_items || 0}/${job.total_items} bài</strong>
-              <small>${job.worker_count || '—'} worker · ${progress}%</small>
+              <strong data-job-title>Đang tạo ${job.completed_items || 0}/${job.total_items} bài</strong>
+              <small data-job-meta>${job.worker_count || '—'} worker · ${progress}%</small>
             </div>
             <progress value="${progress}" max="100" aria-label="Tiến độ tạo bài ${progress}%">${progress}%</progress>
             <button type="button" class="danger automation-cancel" data-cancel-job="${esc(job.id)}" ${job.status === 'CANCEL_REQUESTED' ? 'disabled' : ''}>
@@ -546,7 +555,7 @@ async function renderQueue() {
               const canGenerate = hasSchedule && !finished && !activeItem;
               const canCreateOne = !finished && !activeItem;
               const availability = !hasSchedule ? ' · Thiếu ngày/giờ' : '';
-              return `<tr>
+              return `<tr data-topic-row="${esc(t.id)}">
                 <td><input type="checkbox" data-topic-select value="${esc(t.id)}" ${canGenerate ? '' : 'disabled'} aria-label="Chọn ${esc(t.topic_title)}"></td>
                 <td><div class="topic" title="${esc(t.topic_title)}">${esc(t.topic_title)}</div><small>${esc(t.topic_id)} · Đã chốt từ Sheet${esc(availability)}</small></td>
                 <td class="profile-cell">${esc(t.profile_name || t.profile_id)}</td>
@@ -599,7 +608,7 @@ async function renderQueue() {
               const p = cachedProfiles.find(x => x.id === j.profile_id);
               const activeItem = activeAutomationByPost.get(j.id);
               return `
-                <tr>
+                <tr data-post-row="${esc(j.id)}">
                   <td><input type="checkbox" data-post-select value="${esc(j.id)}" aria-label="Chọn ${esc(j.topic_title)}"></td>
                   <td>
                     <div class="topic" title="${esc(j.topic_title)}">${esc(j.topic_title)}</div>
@@ -612,14 +621,14 @@ async function renderQueue() {
                     </div>
                   </td>
                   <td>${esc(j.content_date)} <small>${esc(j.scheduled_time || '09:00')} · GMT+7</small></td>
-                  <td>${activeItem ? automationStatusTag(activeItem) : badge(j.status)}</td>
+                  <td class="status-cell">${activeItem ? automationStatusTag(activeItem) : badge(j.status)}</td>
                   <td>${queueMode === 'publishing' ? `<div class="publishing-row-actions">
                     ${['READY_FOR_MANUAL_UPLOAD', 'APPROVED'].includes(j.status)
                       ? `<button data-publish="${j.id}" class="primary" title="Đăng bài lên Facebook">${icon('send')}Đăng bài</button>`
                       : j.status === 'MANUALLY_UPLOADED'
                         ? `<button data-publish="${j.id}" title="Đăng lại lên Facebook">${icon('refresh-cw')}Đăng lại</button>`
                         : ''}
-                    <button data-open="${j.id}" title="Mở bài trong Studio">${icon('file-search')}Xem nội dung</button>
+                    <button data-open="${j.id}" title="Xem chi tiết bài">${icon('file-search')}Chi tiết</button>
                     ${j.manual_post_url ? `
                       <div class="action-menu">
                         <button type="button" class="action-menu-trigger" title="Thao tác khác" aria-label="Mở menu thao tác khác" aria-expanded="false">${icon('more-vertical')}</button>
@@ -705,14 +714,7 @@ async function renderQueue() {
         });
       });
     };
-    button.onpointerdown = event => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      createTopic();
-    };
-    button.onclick = event => {
-      if (event.detail === 0) createTopic();
-    };
+    button.onclick = createTopic;
   });
 
   document.querySelectorAll('[data-delete-topic]').forEach(button => {
@@ -734,14 +736,7 @@ async function renderQueue() {
         toast(`Lỗi xóa lịch: ${err.message}`, true);
       }
     };
-    button.onpointerdown = event => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      deleteTopic();
-    };
-    button.onclick = event => {
-      if (event.detail === 0) deleteTopic();
-    };
+    button.onclick = deleteTopic;
   });
 
   $('#selectAllPosts').onchange = e => {
@@ -804,15 +799,9 @@ async function renderQueue() {
       menu.classList.toggle('is-open', willOpen);
       trigger.setAttribute('aria-expanded', String(willOpen));
     };
-    trigger.onpointerdown = event => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      toggleMenu();
-    };
     trigger.onclick = event => {
       event.stopPropagation();
-      if (event.detail === 0) toggleMenu();
+      toggleMenu();
     };
     menu.onclick = event => {
       if (event.target.closest('.action-menu-item')) setTimeout(() => {
@@ -1192,7 +1181,7 @@ async function renderStudio() {
       <section class="panel publishing-panel">
         <div class="panelhead">
           <h2>${icon('send')}Vận hành Đăng bài (Publishing Studio)</h2>
-          <span class="tag published">${isUploaded ? 'Đã hoàn tất đăng' : 'Sẵn sàng đăng'}</span>
+          <span class="tag published">${isUploaded ? 'Đã đăng' : 'Sẵn sàng'}</span>
         </div>
         <div class="actions">
           <button id="autoPublishFb" class="primary" style="background:#1877f2;border-color:#1877f2;color:white">
