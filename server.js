@@ -9,6 +9,7 @@ import { config } from './src/config.js';
 import { initDb, db } from './src/db.js';
 import { getGoogleAuthUrl, handleGoogleCallback, getConnectionStatus } from './src/google/oauth.js';
 import { probeDriveWrite, resolveFolder } from './src/google/drive.js';
+import { initializeProfileRuleFiles } from './src/google/profile-rule-files.js';
 import { syncTopicsFromSheet } from './src/google/sheets.js';
 import { getAllProfiles, getProfileById, updateProfile, createProfile, deleteProfile } from './src/models/profile.js';
 import { getAllRuleVersions, createRuleVersion, getLatestPublishedRule, deleteRuleVersions } from './src/models/rule.js';
@@ -312,7 +313,14 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/profiles' && req.method === 'POST') {
         const body = await parseBody(req);
         const p = createProfile(body);
-        return sendJson(res, 201, p);
+        try {
+          const ruleFiles = await initializeProfileRuleFiles(p);
+          return sendJson(res, 201, { ...p, rule_files: ruleFiles });
+        } catch (error) {
+          // Do not leave a profile that points at a RULES folder which failed initialization.
+          db.prepare('DELETE FROM profiles WHERE id = ?').run(p.id);
+          throw new Error(`Không thể khởi tạo file RULES cho Profile: ${error.message}`);
+        }
       }
       if (pathname.startsWith('/api/profiles/') && req.method === 'PATCH') {
         const profileId = pathname.split('/')[3];
