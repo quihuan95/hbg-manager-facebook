@@ -9,8 +9,9 @@ import { config } from './src/config.js';
 import { initDb, db } from './src/db.js';
 import { getGoogleAuthUrl, handleGoogleCallback, getConnectionStatus } from './src/google/oauth.js';
 import { probeDriveWrite, resolveFolder } from './src/google/drive.js';
-import { initializeProfileRuleFiles } from './src/google/profile-rule-files.js';
+import { provisionProfileDrive } from './src/google/profile-rule-files.js';
 import { syncTopicsFromSheet } from './src/google/sheets.js';
+import { loadReferenceMaterials } from './src/google/reference-materials.js';
 import { getAllProfiles, getProfileById, updateProfile, createProfile, deleteProfile } from './src/models/profile.js';
 import { getAllRuleVersions, createRuleVersion, getLatestPublishedRule, deleteRuleVersions } from './src/models/rule.js';
 import { getAllPosts, getPostById, createPostFromTopic, createNewRevision, updatePostStatus, deletePost } from './src/models/post.js';
@@ -312,20 +313,22 @@ const server = http.createServer(async (req, res) => {
       }
       if (pathname === '/api/profiles' && req.method === 'POST') {
         const body = await parseBody(req);
-        const p = createProfile(body);
-        try {
-          const ruleFiles = await initializeProfileRuleFiles(p);
-          return sendJson(res, 201, { ...p, rule_files: ruleFiles });
-        } catch (error) {
-          // Do not leave a profile that points at a RULES folder which failed initialization.
-          db.prepare('DELETE FROM profiles WHERE id = ?').run(p.id);
-          throw new Error(`Không thể khởi tạo file RULES cho Profile: ${error.message}`);
-        }
+        const profileId = body.id || `prof_${Date.now()}`;
+        const provisioned = await provisionProfileDrive({ ...body, id: profileId });
+        const p = createProfile(provisioned.profile);
+        return sendJson(res, 201, { ...p, drive_setup: provisioned.drive });
       }
       if (pathname.startsWith('/api/profiles/') && req.method === 'PATCH') {
         const profileId = pathname.split('/')[3];
         const body = await parseBody(req);
-        const p = updateProfile(profileId, body);
+        const current = getProfileById(profileId);
+        if (!current) return sendJson(res, 404, { error: 'Content Profile không tồn tại.' });
+        let updateData = body;
+        if (body.folder_id_profile && body.folder_id_profile !== current.folder_id_profile) {
+          const provisioned = await provisionProfileDrive({ ...current, ...body, id: profileId });
+          updateData = provisioned.profile;
+        }
+        const p = updateProfile(profileId, updateData);
         return sendJson(res, 200, p);
       }
       if (pathname.match(/^\/api\/profiles\/([^/]+)$/) && req.method === 'DELETE') {
@@ -544,7 +547,13 @@ const server = http.createServer(async (req, res) => {
 
         updatePostStatus(postId, 'GENERATING');
         try {
-          const aiResult = await generateCaption(post.topic_title, post.profile_name, rule?.content_markdown || '', body.promptContext || '');
+          const referenceMaterials = await loadReferenceMaterials(post.reference_folder_drive_link);
+          const promptContext = [
+            post.article_description && `YÊU CẦU RIÊNG CHO BÀI VIẾT:\n${post.article_description}`,
+            referenceMaterials && `TÀI LIỆU THAM KHẢO (chỉ dùng thông tin có trong đây, không tự bịa):\n${referenceMaterials}`,
+            body.promptContext && `YÊU CẦU TẠO LẠI TỪ NGƯỜI DUYỆT:\n${body.promptContext}`
+          ].filter(Boolean).join('\n\n');
+          const aiResult = await generateCaption(post.topic_title, post.profile_name, rule?.content_markdown || '', promptContext);
           const updatedPost = createNewRevision(postId, {
             caption: aiResult.caption,
             headline: aiResult.headline,

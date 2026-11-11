@@ -1,0 +1,186 @@
+==== Query
+  curl -i -X GET \
+   "https://graph.facebook.com/v26.0/me/accounts?fields=id%2Cname%2Ccategory%2Ctasks%2Caccess_token&access_token=<access token sanitized>"
+==== Access Token Info
+  {
+    "perms": [
+      "pages_show_list",
+      "business_management",
+      "pages_read_engagement",
+      "pages_manage_metadata",
+      "pages_read_user_content",
+      "pages_manage_posts",
+      "pages_manage_engagement",
+      "public_profile"
+    ],
+    "user_id": "122098952829519798",
+    "app_id": "2211535572740421"
+  }
+==== Parameters
+- Query Parameters
+
+
+  {
+    "fields": "id,name,category,tasks,access_token"
+  }
+- POST Parameters
+
+
+  {}
+==== Response
+  {
+    "data": [
+      {
+        "id": "1356722127527894",
+        "name": "Test auto đăng bài",
+        "category": "School",
+        "access_token": "EAAfbYUA4qUUBSyKAkjyRCZCR1PZC0GI4vJTwKVnawoewnZBfsb5q4oMZCx9KZAMTZA3iMEEs7AmUWJDjhm2oLHfe22s4qNYXbUQmP9b2j7ZBegAE8bBACm3uoXoH8u4eEfvgzls1ygwT2NM282Ch2U6TdZAEht0YdhYlZCDDEuEZC7h61BYfZANDy8WxWMfhj4RmLfvQ9HCuLJaABNJpcxz2rR2jhinkbFU3cb1G3RjrHMZD",
+        "tasks": [
+          "MANAGE",
+          "CREATE_CONTENT",
+          "MODERATE",
+          "MESSAGING",
+          "ADVERTISE",
+          "ANALYZE",
+          "MANAGE_LEADS"
+        ]
+      },
+      {
+        "id": "1350620321464801",
+        "name": "The HBG Admin",
+        "category": "Event",
+        "access_token": "EAAfbYUA4qUUBSyvfZAY1OXDeS4iIL9fxlhbRqkuCttt9ZC6ZAVubdsCVo7ZCIkVBG7ZB1HTLAtw8JDRx3hIqYVGmLa0rHZChFXZAQ2I8eon2ISfquAC1MeM1wZCXkaEGZAOt1ZAzwGDXsbbU7O55elQ8Jq4lk23cF0hJv0Go6WMBeXURG6tuNZCvb8ZAYa0U4dNLAkhIJswmnuMyHrjhS8nL9BHS4qaikLA1xwRSdmOpJmkZD",
+        "tasks": [
+          "MANAGE_LEADS",
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT",
+          "MANAGE"
+        ]
+      },
+      {
+        "id": "1269955782873417",
+        "name": "The HBG - CSKH",
+        "category": "Event",
+        "access_token": "EAAfbYUA4qUUBSxcETMUXRxrITQ90dtEicnDTv75CdcTay277O3dHPGxFQQ5DsOKTdCN0yTg3kLHDIgYsSwarB05XMbWhemdARodzKrdTZBUFd4P0llcMJXbxkQpsKs0RaeZCxEGa5nyDBm4PaZAf9Baq4wEGdsU43guZAB4EqX7HVSXx1cmKKhJrZANVAzKkr1N4DCYUt44KrTcHYkH52HXVeMgnQkag87ZAagFcsZD",
+        "tasks": [
+          "MANAGE_LEADS",
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT"
+        ]
+      },
+      {
+        "id": "189925487547552",
+        "name": "Hoabinh Events",
+        "category": "Event planner",
+        "access_token": "EAAfbYUA4qUUBS8hKFZAxySnfxpcbpPzOosMOhgbcWeowmPZBURuVengaiMeq3fUZBZAyhXrGZAgYo5Bu8VEjZCLiOnmpgjYxZAHWiVkNzj1O13F7j6yEQ9uIzgLtvxLY7cTQQNPjkL4UmljdzjJYN71s1vZCxXcWamHZCZBnHeQFriu4qerRJferroS5WVcVruysPXF5WhiJmJXFFHn7v6gu8w97aDV9dZBPZBpjyd9nmAZDZD",
+        "tasks": [
+          "MANAGE_LEADS",
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT",
+          "MANAGE"
+        ]
+      },
+      {
+        "id": "101832345239601",
+        "name": "Thuê xe du lịch - HoaBinh Bus",
+        "category": "Travel service",
+        "access_token": "EAAfbYUA4qUUBSw9CcBjEa3AZA4YWsf8rnQcfKu5fgDsFlw5zZAU2k6kaFfXUS4EtRW3PyJJod1DY7MIFBEb7s5x1TOHIwASAayNbNnhdpwh5EajNI3F9Np46HguMnoWUmK4M0OClTyLz63cZCXaZA0sbBcCriZAvYYw3WclEMLqgWrshcZCw8cHca5UicNZCXBVTZBZBUf1LxQPd6fJVKg714HObemIz0zYWmKZA9ckQZDZD",
+        "tasks": [
+          "MANAGE_LEADS",
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT",
+          "MANAGE"
+        ]
+      },
+      {
+        "id": "221545514676861",
+        "name": "HoaBinh Tourist",
+        "category": "Local & travel website",
+        "access_token": "EAAfbYUA4qUUBSw3ZC2VTwpAyal4pgVsCapQR7TgOyn0URoJWeB9JHdtgQ4nh5ZCC1uNGZAFwxJk1TkTwRAZACyPfFZB6PjrpIuW0QenNMNVaqlwFtgfIP1qrfTH0kD0PcFLtz71ZBoX29VsBrRw4hnwoaZC6Wb8ksbpOGfRnwzFXL8HCZBUHQQQkdbHWnlUMycRTC6EjNZBQtnmqbcHpz8ZCtWrmEOc9GKFf0aTlEyhwZDZD",
+        "tasks": [
+          "MANAGE_LEADS",
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT",
+          "MANAGE"
+        ]
+      },
+      {
+        "id": "108774684133078",
+        "name": "Avvietnam",
+        "category": "Event planner",
+        "access_token": "EAAfbYUA4qUUBSyiFUGZBZB76X4WeAKz1AOSQb5rdgCFr5lbskq3pltpVcql3ZCwk5NGJkKez6cMTncA9Ec3c1bvZAg0gsXQgc0CGeQetFJOFpImx9FVsJzJ93RnwEH15ZAZAnIRFBtjf7xuhIXZBqx9cXr63xo98PQ38G68RuNbHIn778wy3WIFrORDmApqGkD5RO9uE4AkonXVNZA0IBM80nPZAUZABebyEP3sHIIXAZDZD",
+        "tasks": [
+          "MANAGE_LEADS",
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT",
+          "MANAGE"
+        ]
+      },
+      {
+        "id": "1673244842957558",
+        "name": "Danang Events",
+        "category": "Event planner",
+        "access_token": "EAAfbYUA4qUUBS0UXlFfrf7bYoq5bymY5w62Vo8NQ07PyZB0YCY6V2Ki3oxdWGgV78KJ8g9TvUNeLC93WXS64GiCABIyAJZApgKqQJdseouIIKH2N2RiPCxuq0edpwJRlLevzUE1tjDDlzdpORT76nXONuLDLZCDRehDqgqb14kPHftCaIeRv1BfNWgUXFxCWeZCPSJPOpHHag2Fc9T7S1k2tfA2ZAi3FR3pqO3IwZD",
+        "tasks": [
+          "MANAGE_LEADS",
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT",
+          "MANAGE"
+        ]
+      },
+      {
+        "id": "1409849465946548",
+        "name": "Cho Thuê Thiết Bị Hội Nghị Sự Kiện Hội Chợ Triển Lãm Hoà Bình Group",
+        "category": "Arts & entertainment",
+        "access_token": "EAAfbYUA4qUUBS8KTmIypkbtj2QegQSrcoIb1ZBvBaHqX4yhg37OgtymgdwqotDZAcboZComfE399ZB1e0aiRGfdZCjsu0TM4EWJhSbRfMnvFBMRnfm6xhLUSjypZBSy7rXpZCEHkTUCclnxbSvHtqqlP4TNt9JZBeSAGvoakb1EJDtV4ON4FKY3f7WgagrItxdJZAZBqApVwlTGuckl9yjSckshFwYvGHLqZAOnUOp1eTEZD",
+        "tasks": [
+          "MANAGE_LEADS",
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT",
+          "MANAGE"
+        ]
+      },
+      {
+        "id": "927378964001580",
+        "name": "HoaBinh Group",
+        "category": "Organisation",
+        "access_token": "EAAfbYUA4qUUBSwAIL6wvZCUqvbk6ZBWrHYYGl24Fqh1vnW8C00m8S3G3ZAZCV1AlnahpCg8OEn12CQNWTkv0QlwCADQHdFtu1A4kZA6ashai3TwIFWeknjnlt5wNytpYSsrjl5R1vGyyap7IZCYyFPVfvjodTMI6n98iLwe8LxemZBnL4mNnfTiBqZBEM3TUOo935akHFNjZCVBgZAwvZCgqi7KfcyH7qhrtHf2vvxQq8MZD",
+        "tasks": [
+          "MANAGE_LEADS",
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT",
+          "MANAGE"
+        ]
+      }
+    ],
+    "paging": "--sanitized--"
+  }
+==== Debug Information from Graph API Explorer
+- https://developers.facebook.com/tools/explorer/?method=GET&path=me%2Faccounts%3Ffields%3Did%2Cname%2Ccategory%2Ctasks%2Caccess_token&version=v26.0

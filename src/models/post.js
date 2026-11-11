@@ -45,6 +45,8 @@ export function getPostById(postId) {
            (SELECT t.image_rule FROM topics t WHERE t.profile_id = p.profile_id AND t.topic_id = p.topic_id LIMIT 1) as sheet_image_rule,
            (SELECT t.image_frame_drive_link FROM topics t WHERE t.profile_id = p.profile_id AND t.topic_id = p.topic_id LIMIT 1) as image_frame_drive_link,
            (SELECT t.source_image_drive_link FROM topics t WHERE t.profile_id = p.profile_id AND t.topic_id = p.topic_id LIMIT 1) as source_image_drive_link,
+           (SELECT t.reference_folder_drive_link FROM topics t WHERE t.profile_id = p.profile_id AND t.topic_id = p.topic_id LIMIT 1) as reference_folder_drive_link,
+           (SELECT t.article_description FROM topics t WHERE t.profile_id = p.profile_id AND t.topic_id = p.topic_id LIMIT 1) as article_description,
            (SELECT ae.details_json FROM audit_events ae WHERE ae.entity_id = p.id AND ae.action = 'REQUEST_CHANGES' ORDER BY ae.created_at DESC LIMIT 1) as change_request_details_json,
            (SELECT ae.actor_id FROM audit_events ae WHERE ae.entity_id = p.id AND ae.action = 'REQUEST_CHANGES' ORDER BY ae.created_at DESC LIMIT 1) as change_requested_by,
            (SELECT ae.created_at FROM audit_events ae WHERE ae.entity_id = p.id AND ae.action = 'REQUEST_CHANGES' ORDER BY ae.created_at DESC LIMIT 1) as change_requested_at

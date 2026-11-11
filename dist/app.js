@@ -102,6 +102,14 @@ function googleSheetUrl(value) {
   return id ? `https://docs.google.com/spreadsheets/d/${encodeURIComponent(id)}/edit` : '';
 }
 
+function googleDriveFolderUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  const id = match?.[1] || (/^[a-zA-Z0-9_-]+$/.test(raw) ? raw : '');
+  return id ? `https://drive.google.com/drive/folders/${encodeURIComponent(id)}` : '';
+}
+
 function facebookPageUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -322,15 +330,6 @@ async function pollGlobalNotifications() {
   } catch {
     // Background notifications must not interrupt the current screen.
   }
-}
-
-function setPublishLoading(loading, idleText = 'Đăng bài') {
-  const submitButton = $('#modalForm button[type="submit"]');
-  if (!submitButton) return;
-  submitButton.disabled = loading;
-  submitButton.innerHTML = loading
-    ? '<span class="button-spinner" aria-hidden="true"></span>Đang đăng...'
-    : esc(idleText);
 }
 
 function goto(r) {
@@ -866,7 +865,6 @@ async function renderQueue() {
         const method = f.get('publishMethod');
         const pageTarget = f.get('pageTarget');
         const note = f.get('note');
-        setPublishLoading(true);
         try {
           if (method === 'auto') {
             const res = await api(`/api/posts/${encodeURIComponent(post.id)}/publish-facebook`, {
@@ -884,7 +882,6 @@ async function renderQueue() {
           await renderQueue();
         } catch (err) {
           toast(`Lỗi đăng bài: ${err.message}`, true);
-          setPublishLoading(false, isRePublish ? 'Đăng lại' : 'Đăng bài');
           return false;
         }
       });
@@ -918,11 +915,50 @@ async function renderQueue() {
 function modal(title, body, fn) {
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = body;
-  $('#modalForm').onsubmit = async e => {
-    e.preventDefault();
-    if ((await fn(new FormData(e.target))) !== false) $('#modal').close();
+  const form = $('#modalForm');
+  const submitButton = form.querySelector('button[type="submit"]');
+  const cancelButton = $('#cancelModal');
+  const closeButton = $('#closeModal');
+  const modalElement = $('#modal');
+  const idleSubmitHtml = `${icon('save')}Lưu`;
+  let submitting = false;
+  submitButton.disabled = false;
+  cancelButton.disabled = false;
+  closeButton.disabled = false;
+  submitButton.removeAttribute('aria-busy');
+  submitButton.innerHTML = idleSubmitHtml;
+  modalElement.oncancel = event => {
+    if (submitting) event.preventDefault();
   };
-  $('#modal').showModal();
+  form.onsubmit = async e => {
+    e.preventDefault();
+    if (submitting) return;
+
+    submitting = true;
+    submitButton.disabled = true;
+    cancelButton.disabled = true;
+    closeButton.disabled = true;
+    submitButton.setAttribute('aria-busy', 'true');
+    submitButton.innerHTML = '<span class="button-spinner" aria-hidden="true"></span>Đang lưu...';
+
+    try {
+      if ((await fn(new FormData(e.target))) !== false) {
+        modalElement.close();
+        return;
+      }
+    } catch (error) {
+      toast(`Lỗi: ${error.message}`, true);
+    }
+
+    submitting = false;
+    submitButton.disabled = false;
+    cancelButton.disabled = false;
+    closeButton.disabled = false;
+    submitButton.removeAttribute('aria-busy');
+    submitButton.innerHTML = idleSubmitHtml;
+    renderIcons();
+  };
+  modalElement.showModal();
   renderIcons();
   refreshSimplebars();
 }
@@ -1216,9 +1252,13 @@ async function renderStudio() {
             <input id="cta" value="${esc(post.cta || '')}" placeholder="Ví dụ: Nhắn tin hoặc gọi hotline để nhận tư vấn chi tiết.">
           </label>
 
+          <label>Prompt tạo lại Caption (tùy chọn)
+            <textarea id="captionPrompt" rows="4" placeholder="Ví dụ: Viết súc tích hơn, nhấn mạnh lợi ích ở đoạn 2, dùng văn phong gần gũi...">${esc(changeRequestReason || '')}</textarea>
+          </label>
+
           <div class="actions">
             <button id="aiCaption" class="primary">${icon('sparkles')}Sinh Caption bằng AI (OpenAI)</button>
-            ${post.status === 'DRAFT' && changeRequestReason ? `<button id="regenerateCaption">${icon('refresh-cw')}Sinh lại theo yêu cầu sửa</button>` : ''}
+            <button id="regenerateCaption">${icon('refresh-cw')}Tạo lại Caption theo prompt</button>
             <button id="saveCaption">Lưu chỉnh sửa Revision</button>
           </div>
           <p class="muted" id="aiCaptionStatus">Tự động áp dụng Rule thương hiệu của <b>${esc(post.profile_name)}</b>.</p>
@@ -1329,7 +1369,10 @@ async function renderStudio() {
     btn.disabled = true;
     btn.textContent = 'Đang viết caption với GPT...';
     try {
-      const res = await api(`/api/posts/${post.id}/generate-caption`, { method: 'POST' });
+      const res = await api(`/api/posts/${post.id}/generate-caption`, {
+        method: 'POST',
+        body: JSON.stringify({ promptContext: $('#captionPrompt').value.trim() })
+      });
       toast('Đã tạo caption mới bằng AI thành công!');
       renderStudio();
     } catch (err) {
@@ -1342,14 +1385,9 @@ async function renderStudio() {
   // Regenerate caption using the latest change-request reason as prompt context
   const regenerateCaptionBtn = $('#regenerateCaption');
   if (regenerateCaptionBtn) {
-    regenerateCaptionBtn.onclick = () => {
-      modal('Sinh lại nội dung theo yêu cầu sửa', `
-        <p class="muted">Lý do sửa gần nhất đã được điền sẵn. Bạn có thể bổ sung yêu cầu cụ thể trước khi gửi cho AI.</p>
-        <label>Prompt chỉnh sửa
-          <textarea name="promptContext" rows="7" required minlength="3">${esc(changeRequestReason)}</textarea>
-        </label>
-      `, async f => {
-        const promptContext = String(f.get('promptContext') || '').trim();
+    regenerateCaptionBtn.onclick = async () => {
+        const promptContext = $('#captionPrompt').value.trim();
+        if (!promptContext) return toast('Hãy nhập prompt yêu cầu tạo lại Caption.', true);
         const revisionPrompt = `YÊU CẦU CHỈNH SỬA:\n${promptContext}\n\nNỘI DUNG HIỆN TẠI CẦN VIẾT LẠI:\nHeadline: ${post.headline || ''}\nCaption: ${post.caption || ''}\nCTA: ${post.cta || ''}`;
         try {
           regenerateCaptionBtn.disabled = true;
@@ -1363,10 +1401,8 @@ async function renderStudio() {
         } catch (err) {
           toast(`Lỗi sinh lại nội dung: ${err.message}`, true);
           regenerateCaptionBtn.disabled = false;
-          regenerateCaptionBtn.innerHTML = `${icon('refresh-cw')}Sinh lại theo yêu cầu sửa`;
-          return false;
+          regenerateCaptionBtn.innerHTML = `${icon('refresh-cw')}Tạo lại Caption theo prompt`;
         }
-      });
     };
   }
 
@@ -1574,7 +1610,6 @@ async function renderStudio() {
       `, async f => {
         autoPublishFbBtn.disabled = true;
         autoPublishFbBtn.textContent = 'Đang đăng...';
-        setPublishLoading(true);
         try {
           const res = await api(`/api/posts/${post.id}/publish-facebook`, {
             method: 'POST',
@@ -1589,7 +1624,6 @@ async function renderStudio() {
           toast(`Lỗi đăng bài: ${err.message}`, true);
           autoPublishFbBtn.disabled = false;
           autoPublishFbBtn.innerHTML = `${icon(isRePublish ? 'refresh-cw' : 'send')}${isRePublish ? 'Đăng lại lên Facebook' : 'Tự động đăng lên Facebook'}`;
-          setPublishLoading(false, isRePublish ? 'Đăng lại' : 'Đăng bài');
           return false;
         }
       });
@@ -1683,7 +1717,7 @@ async function renderProfiles() {
 
   $('#addProfile').onclick = () => editProfile();
   $('#copyProfilesConfig').onclick = async () => {
-    const keys = ['id', 'name', 'type', 'brand', 'language', 'timezone', 'folder_id_rules', 'folder_id_topics', 'folder_id_materials', 'folder_id_output', 'sheet_id_topics', 'page_name', 'facebook_page_id', 'color', 'workflow_mode', 'retain_removed_posts', 'logo_data', 'logo_mime', 'time', 'active'];
+    const keys = ['id', 'name', 'type', 'brand', 'language', 'timezone', 'folder_id_profile', 'folder_id_rules', 'folder_id_topics', 'folder_id_materials', 'folder_id_output', 'sheet_id_topics', 'page_name', 'facebook_page_id', 'color', 'workflow_mode', 'retain_removed_posts', 'logo_data', 'logo_mime', 'time', 'active'];
     try {
       await copyJson({ type: 'hbg-content-profiles', version: 1, profiles: cachedProfiles.map(profile => Object.fromEntries(keys.map(key => [key, profile[key]]))) }, 'Đã copy cấu hình Content Profiles.');
     } catch (error) {
@@ -1820,18 +1854,14 @@ function editProfile(p) {
         <span class="switch-slider"></span>
       </label>
     </div>
-    <div class="formrow">
-      <label>Thư mục Drive RULES (ID hoặc đường dẫn)<input name="folder_id_rules" value="${esc(p?.folder_id_rules || '')}" placeholder="Khuyên dùng Folder ID, ví dụ: 1a2B..."></label>
-      <label>Thư mục Drive OUTPUT (ID hoặc đường dẫn)<input name="folder_id_output" value="${esc(p?.folder_id_output || '')}" placeholder="Khuyên dùng Folder ID, ví dụ: 1a2B..."></label>
-    </div>
-    <p class="muted">Mở từng thư mục trên Google Drive và sao chép phần ID sau <b>/folders/</b> trong URL. Folder ID ổn định hơn đường dẫn theo tên.</p>
-    <label>Google Sheet ID chứa tab TOPICS
+    <label>Thư mục Drive của Profile
       <div class="input-with-action">
-        <input name="sheet_id_topics" value="${esc(p?.sheet_id_topics || '')}" placeholder="Ví dụ: 1BxiMVs0XR...">
-        ${googleSheetUrl(p?.sheet_id_topics) ? `<a class="button" href="${esc(googleSheetUrl(p.sheet_id_topics))}" target="_blank" rel="noopener noreferrer">Mở Sheet ↗</a>` : ''}
+        <input name="folder_id_profile" value="${esc(p?.folder_id_profile || '')}" required placeholder="Dán link https://drive.google.com/drive/folders/...">
+        ${googleDriveFolderUrl(p?.folder_id_profile) ? `<a class="button" href="${esc(googleDriveFolderUrl(p.folder_id_profile))}" target="_blank" rel="noopener noreferrer">Mở Drive ↗</a>` : ''}
       </div>
     </label>
-    <p class="muted">Tab TOPICS cần 4 cột: <b>topic_id</b>, <b>content_date</b>, <b>publish_time</b>, <b>topic_title</b>. Có thể thêm <b>image_rule</b>, <b>source_image_drive_link</b> (link nguồn ảnh) và <b>image_frame_drive_link</b> (link khung ảnh). Nguồn ảnh để trống sẽ tạo ảnh mới theo nội dung; khung để trống sẽ không lắp khung.</p>
+    <p class="muted">Khi tạo Profile, hệ thống sẽ kiểm tra và tự tạo các thư mục <b>RULES</b>, <b>TOPICS</b>, <b>OUTPUT</b>, các file Rule và Google Sheet <b>CONTENT_PLAN</b> còn thiếu. Dữ liệu đã có sẽ không bị ghi đè.</p>
+    ${p?.sheet_id_topics ? `<p class="muted">Google Sheet hiện tại: <a href="${esc(googleSheetUrl(p.sheet_id_topics))}" target="_blank" rel="noopener noreferrer">Mở CONTENT_PLAN ↗</a></p>` : ''}
     <div class="formrow">
       <label>Tên Facebook Page<input name="page_name" value="${esc(p?.page_name || '')}" placeholder="Ví dụ: Danang Events"></label>
       <label>Facebook Page ID hoặc link
@@ -1853,9 +1883,7 @@ function editProfile(p) {
         color: f.get('color'),
         workflow_mode: f.get('workflow_mode'),
         retain_removed_posts: f.has('retain_removed_posts'),
-        folder_id_rules: f.get('folder_id_rules').trim(),
-        folder_id_output: f.get('folder_id_output').trim(),
-        sheet_id_topics: f.get('sheet_id_topics').trim(),
+        folder_id_profile: f.get('folder_id_profile').trim(),
         page_name: f.get('page_name').trim(),
         facebook_page_id: f.get('facebook_page_id').trim(),
         active: p ? p.active : true

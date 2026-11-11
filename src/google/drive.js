@@ -16,8 +16,11 @@ export async function resolveFolder(folderPathOrId) {
   const token = await getValidAccessToken();
   if (!token) throw new Error('Chưa kết nối Google Drive hoặc cần kết nối lại (NEEDS_RECONNECT).');
 
-  const requestedFolder = String(folderPathOrId || '').trim();
+  let requestedFolder = String(folderPathOrId || '').trim();
   if (!requestedFolder) throw new Error('Chưa nhập ID hoặc đường dẫn thư mục Google Drive.');
+
+  const folderUrlMatch = requestedFolder.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (folderUrlMatch) requestedFolder = folderUrlMatch[1];
 
   // If it's already a folder ID (alphanumeric, e.g. 1a2B3c...)
   if (/^[a-zA-Z0-9_-]{15,}$/.test(requestedFolder)) {
@@ -58,6 +61,136 @@ export async function resolveFolder(folderPathOrId) {
   }
 
   return resolvedFolder;
+}
+
+export async function createGoogleSpreadsheet(parentFolderId, fileName, tabName = 'TOPICS') {
+  const token = await getValidAccessToken();
+  if (!token) throw new Error('Chưa kết nối Google Drive.');
+
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      name: fileName,
+      mimeType: 'application/vnd.google-apps.spreadsheet',
+      parents: [parentFolderId]
+    })
+  });
+  if (!createRes.ok) {
+    const error = await createRes.json().catch(() => ({}));
+    throw new Error(`Không thể tạo Google Sheet "${fileName}": ${error.error?.message || createRes.statusText}`);
+  }
+  const spreadsheet = await createRes.json();
+
+  const metadataRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet.id}?fields=sheets.properties`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!metadataRes.ok) throw new Error(`Không thể đọc Sheet vừa tạo: ${metadataRes.statusText}`);
+  const metadata = await metadataRes.json();
+  const firstSheetId = metadata.sheets?.[0]?.properties?.sheetId;
+  if (firstSheetId === undefined) throw new Error('Google Sheet vừa tạo không có tab mặc định.');
+
+  const renameRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet.id}:batchUpdate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      requests: [{ updateSheetProperties: { properties: { sheetId: firstSheetId, title: tabName }, fields: 'title' } }]
+    })
+  });
+  if (!renameRes.ok) throw new Error(`Không thể đổi tên tab Sheet thành ${tabName}: ${renameRes.statusText}`);
+
+  const headers = [[
+    'topic_id',
+    'content_date',
+    'publish_time',
+    'topic_title',
+    'image_rule',
+    'source_image_drive_link',
+    'image_frame_drive_link',
+    'reference_folder_drive_link',
+    'article_description'
+  ]];
+  const valuesRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet.id}/values/${encodeURIComponent(`${tabName}!A1:I1`)}?valueInputOption=RAW`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ values: headers })
+    }
+  );
+  if (!valuesRes.ok) throw new Error(`Không thể tạo hàng tiêu đề cho tab ${tabName}: ${valuesRes.statusText}`);
+
+  return spreadsheet;
+}
+
+export async function ensureGoogleSpreadsheetTab(spreadsheetId, tabName = 'TOPICS') {
+  const token = await getValidAccessToken();
+  if (!token) throw new Error('Chưa kết nối Google Drive.');
+
+  const metadataRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!metadataRes.ok) throw new Error(`Không thể kiểm tra Google Sheet (${spreadsheetId}): ${metadataRes.statusText}`);
+  const metadata = await metadataRes.json();
+  const hasTab = metadata.sheets?.some(sheet => sheet.properties?.title === tabName);
+  if (!hasTab) {
+    const addTabRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tabName } } }] })
+    });
+    if (!addTabRes.ok) throw new Error(`Không thể tạo tab ${tabName}: ${addTabRes.statusText}`);
+  }
+
+  const range = encodeURIComponent(`${tabName}!A1:I1`);
+  const valuesRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!valuesRes.ok) throw new Error(`Không thể kiểm tra tiêu đề tab ${tabName}: ${valuesRes.statusText}`);
+  const values = await valuesRes.json();
+  const firstRow = values.values?.[0] || [];
+  const expectedHeaders = [
+    'topic_id',
+    'content_date',
+    'publish_time',
+    'topic_title',
+    'image_rule',
+    'source_image_drive_link',
+    'image_frame_drive_link',
+    'reference_folder_drive_link',
+    'article_description'
+  ];
+  const normalizedHeaders = firstRow.map(value => String(value || '').trim().toLowerCase());
+  const headers = [firstRow.some(value => String(value || '').trim())
+    ? [...firstRow, ...expectedHeaders.filter(header => !normalizedHeaders.includes(header))]
+    : expectedHeaders];
+  if (headers[0].length === firstRow.length && firstRow.length) return { tabCreated: !hasTab, headersCreated: false };
+  const writeRange = encodeURIComponent(`${tabName}!A1:${String.fromCharCode(64 + headers[0].length)}1`);
+  const writeRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${writeRange}?valueInputOption=RAW`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ values: headers })
+    }
+  );
+  if (!writeRes.ok) throw new Error(`Không thể tạo hàng tiêu đề cho tab ${tabName}: ${writeRes.statusText}`);
+  return { tabCreated: !hasTab, headersCreated: true };
 }
 
 export async function listFolderFiles(folderId) {

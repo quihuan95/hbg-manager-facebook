@@ -12,6 +12,7 @@ import crypto from 'node:crypto';
 import { applyProfileLogo } from './image/logo.js';
 import { applyDriveFrame, loadDriveImages } from './image/drive-assets.js';
 import { config } from './config.js';
+import { loadReferenceMaterials } from './google/reference-materials.js';
 
 class AutomationCancelledError extends Error {
   constructor() {
@@ -191,11 +192,16 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
     if (!rule) throw new Error('Profile chưa có Rule được kích hoạt.');
 
     updatePostStatus(post.id, 'GENERATING');
+    const referenceMaterials = await loadReferenceMaterials(topic.reference_folder_drive_link);
+    const captionContext = [
+      topic.article_description && `YÊU CẦU RIÊNG CHO BÀI VIẾT:\n${topic.article_description}`,
+      referenceMaterials && `TÀI LIỆU THAM KHẢO (chỉ dùng thông tin có trong đây, không tự bịa):\n${referenceMaterials}`
+    ].filter(Boolean).join('\n\n');
     const caption = await generateCaption(
       topic.topic_title,
       profile.name,
       rule.content_markdown,
-      ''
+      captionContext
     );
     throwIfCancelled(shouldCancel);
     post = createNewRevision(post.id, {

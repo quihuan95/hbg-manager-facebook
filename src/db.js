@@ -61,6 +61,7 @@ export function initDb() {
       brand TEXT,
       language TEXT NOT NULL DEFAULT 'vi',
       timezone TEXT NOT NULL DEFAULT 'Asia/Ho_Chi_Minh',
+      folder_id_profile TEXT,
       folder_id_rules TEXT,
       folder_id_topics TEXT,
       folder_id_materials TEXT,
@@ -111,6 +112,8 @@ export function initDb() {
       image_rule TEXT,
       image_frame_drive_link TEXT,
       source_image_drive_link TEXT,
+      reference_folder_drive_link TEXT,
+      article_description TEXT,
       status TEXT NOT NULL DEFAULT 'READY', -- Rows present in Sheet are confirmed.
       source_hash TEXT NOT NULL,
       source_revision INTEGER NOT NULL DEFAULT 1,
@@ -257,6 +260,9 @@ export function initDb() {
 
   // Lightweight migration for databases created before Facebook Page mapping existed.
   const profileColumns = db.prepare('PRAGMA table_info(profiles)').all();
+  if (!profileColumns.some(column => column.name === 'folder_id_profile')) {
+    db.exec('ALTER TABLE profiles ADD COLUMN folder_id_profile TEXT');
+  }
   if (!profileColumns.some(column => column.name === 'facebook_page_id')) {
     db.exec('ALTER TABLE profiles ADD COLUMN facebook_page_id TEXT');
   }
@@ -284,6 +290,12 @@ export function initDb() {
   }
   if (!topicColumns.some(column => column.name === 'source_image_drive_link')) {
     db.exec('ALTER TABLE topics ADD COLUMN source_image_drive_link TEXT');
+  }
+  if (!topicColumns.some(column => column.name === 'reference_folder_drive_link')) {
+    db.exec('ALTER TABLE topics ADD COLUMN reference_folder_drive_link TEXT');
+  }
+  if (!topicColumns.some(column => column.name === 'article_description')) {
+    db.exec('ALTER TABLE topics ADD COLUMN article_description TEXT');
   }
   const postColumns = db.prepare('PRAGMA table_info(posts)').all();
   if (!postColumns.some(column => column.name === 'creation_source')) {

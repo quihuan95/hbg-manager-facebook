@@ -6,6 +6,14 @@ import { markManuallyUploaded } from './manual_upload.js';
 
 const GRAPH_BASE_URL = 'https://graph.facebook.com';
 
+function normalizePageTarget(targetPage) {
+  const cleanTarget = String(targetPage || '').trim();
+  if (!cleanTarget) return '';
+  if (/^\d+$/.test(cleanTarget)) return cleanTarget;
+  const match = cleanTarget.match(/\/(?:pages\/[^/]+\/)?(\d+)/) || cleanTarget.match(/facebook\.com\/([^/?#]+)/i);
+  return match?.[1] || cleanTarget;
+}
+
 async function readJson(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -39,11 +47,7 @@ export async function resolveFacebookPage(targetPage = null) {
   if (pages.length > 0) {
     if (targetPage) {
       const cleanTarget = String(targetPage).trim();
-      let targetId = cleanTarget;
-      if (!/^\d+$/.test(cleanTarget)) {
-        const match = cleanTarget.match(/\/(?:pages\/[^/]+\/)?(\d+)/) || cleanTarget.match(/facebook\.com\/([^/?#]+)/);
-        if (match && match[1]) targetId = match[1];
-      }
+      const targetId = normalizePageTarget(cleanTarget);
 
       const found = pages.find(p => p.id === targetId || p.id === cleanTarget || p.name.toLowerCase() === cleanTarget.toLowerCase());
       if (found) {
@@ -53,9 +57,11 @@ export async function resolveFacebookPage(targetPage = null) {
           accessToken: found.access_token || token
         };
       }
+
+      throw new Error(`Token hiện tại không quản lý Facebook Page đã cấu hình (${cleanTarget}). Đã hủy đăng để tránh đăng nhầm Page.`);
     }
 
-    // Default to the first page if only 1 page is managed
+    // Only fall back when the caller did not explicitly select a Page.
     if (pages.length === 1) {
       return {
         pageId: pages[0].id,
@@ -73,6 +79,16 @@ export async function resolveFacebookPage(targetPage = null) {
   });
   const meData = await meRes.json().catch(() => ({}));
   if (meRes.ok && meData?.id) {
+    if (targetPage) {
+      const cleanTarget = String(targetPage).trim();
+      const targetId = normalizePageTarget(cleanTarget);
+      const matchesTarget = meData.id === targetId
+        || meData.id === cleanTarget
+        || String(meData.name || '').toLowerCase() === cleanTarget.toLowerCase();
+      if (!matchesTarget) {
+        throw new Error(`Page Access Token thuộc Page "${meData.name || meData.id}" (${meData.id}), không phải Page đã cấu hình (${cleanTarget}). Đã hủy đăng để tránh đăng nhầm Page.`);
+      }
+    }
     return {
       pageId: meData.id,
       pageName: meData.name || 'Facebook Page',

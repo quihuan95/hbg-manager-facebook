@@ -1,4 +1,11 @@
-import { listFolderFiles, resolveFolder, uploadFileToDrive } from './drive.js';
+import {
+  createFolder,
+  createGoogleSpreadsheet,
+  ensureGoogleSpreadsheetTab,
+  listFolderFiles,
+  resolveFolder,
+  uploadFileToDrive
+} from './drive.js';
 
 const RULE_FILE_TEMPLATES = {
   'CONTENT_RULE.md': profile => `# CONTENT_RULE
@@ -96,4 +103,49 @@ export async function initializeProfileRuleFiles(profile) {
   }
 
   return { folderId: folder.id, created, existing };
+}
+
+export async function provisionProfileDrive(profile) {
+  if (!profile.folder_id_profile) {
+    throw new Error('Cần dán link hoặc ID thư mục Drive của Profile.');
+  }
+
+  const root = await resolveFolder(profile.folder_id_profile);
+  const rulesFolder = await createFolder(root.id, 'RULES');
+  const topicsFolder = await createFolder(root.id, 'TOPICS');
+  const outputFolder = await createFolder(root.id, 'OUTPUT');
+
+  const topicFiles = await listFolderFiles(topicsFolder.id);
+  const spreadsheets = topicFiles.filter(file => file.mimeType === 'application/vnd.google-apps.spreadsheet');
+  let spreadsheet = spreadsheets.find(file => file.name === 'CONTENT_PLAN') || spreadsheets[0];
+  let spreadsheetCreated = false;
+  if (!spreadsheet) {
+    spreadsheet = await createGoogleSpreadsheet(topicsFolder.id, 'CONTENT_PLAN', 'TOPICS');
+    spreadsheetCreated = true;
+  } else {
+    await ensureGoogleSpreadsheetTab(spreadsheet.id, 'TOPICS');
+  }
+
+  const provisionedProfile = {
+    ...profile,
+    folder_id_profile: root.id,
+    folder_id_rules: rulesFolder.id,
+    folder_id_topics: topicsFolder.id,
+    folder_id_output: outputFolder.id,
+    sheet_id_topics: spreadsheet.id
+  };
+  const ruleFiles = await initializeProfileRuleFiles(provisionedProfile);
+
+  return {
+    profile: provisionedProfile,
+    drive: {
+      rootFolderId: root.id,
+      rulesFolderId: rulesFolder.id,
+      topicsFolderId: topicsFolder.id,
+      outputFolderId: outputFolder.id,
+      spreadsheetId: spreadsheet.id,
+      spreadsheetCreated,
+      ruleFiles
+    }
+  };
 }

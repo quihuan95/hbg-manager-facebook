@@ -59,7 +59,7 @@ export function updateProfile(id, data) {
   db.prepare(`
     UPDATE profiles 
     SET name = ?, type = ?, brand = ?, language = ?, timezone = ?, 
-        folder_id_rules = ?, folder_id_topics = ?, folder_id_materials = ?, folder_id_output = ?, sheet_id_topics = ?,
+        folder_id_profile = ?, folder_id_rules = ?, folder_id_topics = ?, folder_id_materials = ?, folder_id_output = ?, sheet_id_topics = ?,
         page_name = ?, facebook_page_id = ?, color = ?, workflow_mode = ?, retain_removed_posts = ?, logo_data = ?, logo_mime = ?, time = ?, active = ?, updated_at = ?
     WHERE id = ?
   `).run(
@@ -68,6 +68,7 @@ export function updateProfile(id, data) {
     merged.brand || null,
     merged.language || 'vi',
     merged.timezone || 'Asia/Ho_Chi_Minh',
+    merged.folder_id_profile || null,
     merged.folder_id_rules || null,
     merged.folder_id_topics || null,
     merged.folder_id_materials || null,
@@ -97,8 +98,8 @@ export function createProfile(data) {
   const logo = normalizeLogo(data.logo_data);
   const now = new Date().toISOString();
   db.prepare(`
-    INSERT INTO profiles (id, name, type, brand, language, timezone, folder_id_rules, folder_id_topics, folder_id_materials, folder_id_output, sheet_id_topics, page_name, facebook_page_id, color, workflow_mode, retain_removed_posts, logo_data, logo_mime, time, active, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO profiles (id, name, type, brand, language, timezone, folder_id_profile, folder_id_rules, folder_id_topics, folder_id_materials, folder_id_output, sheet_id_topics, page_name, facebook_page_id, color, workflow_mode, retain_removed_posts, logo_data, logo_mime, time, active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.name,
@@ -106,6 +107,7 @@ export function createProfile(data) {
     data.brand || null,
     data.language || 'vi',
     data.timezone || 'Asia/Ho_Chi_Minh',
+    data.folder_id_profile || null,
     data.folder_id_rules || null,
     data.folder_id_topics || null,
     data.folder_id_materials || null,
