@@ -586,7 +586,7 @@ const server = http.createServer(async (req, res) => {
                 post.sheet_image_rule && `Ưu tiên 2 — Rule ảnh từ Sheet: ${post.sheet_image_rule}`
               ].filter(Boolean).join('\n\n')
             : (post.image_brief || post.sheet_image_rule || '');
-          const referenceImages = await loadDriveImages(post.source_image_drive_link);
+          const referenceImages = await loadDriveImages(post.source_image_drive_link, 10, { allowEmptyFolder: true });
           const briefs = referenceImages.length
             ? referenceImages.map((source, index) => effectiveImageBrief || `Tạo ảnh minh họa số ${index + 1} cho bài viết dựa sát trên ảnh nguồn này.`)
             : await planImageBriefs({ topic: post.topic_title, caption: post.caption, profileName: post.profile_name, ruleText: rule?.content_markdown || '', customBrief: effectiveImageBrief });

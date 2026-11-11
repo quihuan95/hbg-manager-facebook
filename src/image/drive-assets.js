@@ -29,16 +29,18 @@ export function extractDriveId(value) {
 	return match[1];
 }
 
-export async function loadDriveImages(link, maxFiles = 10) {
+export async function loadDriveImages(link, maxFiles = 10, { allowEmptyFolder = false } = {}) {
 	const id = extractDriveId(link);
 	if (!id) return [];
 	const metadata = await getFileMetadata(id);
+	const isFolder = metadata.mimeType === FOLDER_MIME;
 	const files =
-		metadata.mimeType === FOLDER_MIME
+		isFolder
 			? (await listFolderFiles(id))
 					.filter((file) => IMAGE_MIMES.has(file.mimeType))
 					.slice(0, maxFiles)
 			: [metadata];
+	if (!files.length && isFolder && allowEmptyFolder) return [];
 	if (!files.length)
 		throw new Error(
 			"Link nguồn ảnh không chứa file PNG, JPEG hoặc WebP hợp lệ.",
