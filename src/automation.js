@@ -216,7 +216,7 @@ async function processTopic(profile, topic, scheduleOverride = null, scheduledRu
     const imageInstruction = topic.image_rule
       ? `Chủ đề: ${topic.topic_title}. Quy tắc hình ảnh riêng cho bài này: ${topic.image_rule}`
       : (post.image_brief || caption.imageBrief || '');
-    const referenceImages = await loadDriveImages(topic.source_image_drive_link, 10, { allowEmptyFolder: true });
+    const referenceImages = await loadDriveImages(topic.source_image_drive_link, 10, { allowEmptyFolder: true, allowUnavailable: true });
     throwIfCancelled(shouldCancel);
     const briefs = referenceImages.length
       ? referenceImages.map((source, index) => imageInstruction || `Tạo ảnh minh họa số ${index + 1} dựa sát trên ảnh nguồn này.`)

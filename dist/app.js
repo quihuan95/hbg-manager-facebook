@@ -141,6 +141,7 @@ const routes = {
 let currentPostId = null;
 let serverStatus = null;
 let cachedProfiles = [];
+let updaterUnsubscribe = null;
 let cachedPosts = [];
 let filter = '';
 let query = '';
@@ -356,9 +357,8 @@ function badge(s) {
 
 function mark(p) {
   if (!p) return '<span class="mark">HB</span>';
-  if (p.logo_data) return `<span class="mark profile-logo"><img src="${esc(p.logo_data)}" alt="Logo ${esc(p.name)}"></span>`;
-  const color = /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color : '#4970d5';
-  return `<span class="mark profile-mark" style="--profile-color:${esc(color)}">${esc((p.name || 'HB').split(' ').map(x => x[0]).join('').slice(0, 2))}</span>`;
+  const logoSource = p.logo_data || 'assets/the-hbg-logo.png';
+  return `<span class="mark profile-logo"><img src="${esc(logoSource)}" alt="Logo ${esc(p.name)}"></span>`;
 }
 
 function readImageFile(file) {
@@ -1691,7 +1691,7 @@ async function renderProfiles() {
             <span>Folder OUTPUT</span><b>${esc(p.folder_id_output || 'Chưa cấu hình')}</b>
             <span>Google Sheet ID</span><b>${esc(p.sheet_id_topics || 'Chưa cấu hình')}</b>
             <span>Facebook Page</span><b>${esc(p.page_name || 'Chưa cấu hình')}${p.facebook_page_id ? ` · ${esc(p.facebook_page_id)}` : ''}</b>
-            <span>Logo</span><b>${p.logo_data ? 'Đã tải lên' : 'Chưa cấu hình'}</b>
+            <span>Logo</span><b>${p.logo_data ? 'Logo riêng' : 'Logo mặc định The HBG'}</b>
             <span>Khi xóa khỏi Sheet</span><b>${p.retain_removed_posts ? 'Lưu trữ bài đã tạo' : 'Xóa bài khỏi ứng dụng'}</b>
             <span>Giờ đăng mẫu</span><b>${esc(p.time || '09:00')} · GMT+7</b>
           </div>
@@ -1835,7 +1835,7 @@ function editProfile(p) {
     <label>Logo thương hiệu (PNG/JPEG/WebP, tối đa 3 MB)
       <input type="file" name="logo_file" accept="image/png,image/jpeg,image/webp">
     </label>
-    ${p?.logo_data ? `<div class="profile-logo-preview"><img src="${esc(p.logo_data)}" alt="Logo hiện tại"><span>Logo hiện tại · tải file mới để thay thế</span></div>` : ''}
+    <div class="profile-logo-preview"><img src="${esc(p?.logo_data || 'assets/the-hbg-logo.png')}" alt="${p?.logo_data ? 'Logo hiện tại' : 'Logo mặc định The HBG'}"><span>${p?.logo_data ? 'Logo hiện tại · tải file mới để thay thế' : 'Đang dùng logo mặc định The HBG · tải file để thay thế'}</span></div>
     <label>Chế độ vận hành
       <select name="workflow_mode">
         <option value="manual" ${p?.workflow_mode === 'manual' ? 'selected' : ''}>Thủ công — tự tạo, duyệt và đăng bài</option>
@@ -2181,6 +2181,10 @@ async function renderLogs() {
 async function renderSettings() {
   await fetchStatus();
   const appConfig = await api('/api/app-config');
+  const desktopUpdater = window.hbgUpdater || null;
+  const initialUpdateState = desktopUpdater
+    ? await desktopUpdater.getState()
+    : { status: 'unsupported', currentVersion: 'Web', message: 'Tự động cập nhật chỉ có trong ứng dụng desktop.' };
 
   const googleOk = serverStatus?.services?.googleDrive?.configured;
   const openaiOk = serverStatus?.services?.openai?.configured;
@@ -2262,6 +2266,27 @@ async function renderSettings() {
     <section class="panel" style="margin-top:20px">
       <div class="panelhead">
         <div>
+          <h2>Cập nhật phần mềm</h2>
+          <p id="softwareUpdateMessage" class="muted"></p>
+        </div>
+        <div class="toolbar">
+          <button id="checkSoftwareUpdate" type="button">${icon('refresh-cw')}Kiểm tra cập nhật</button>
+          <button id="installSoftwareUpdate" class="primary" type="button" hidden>${icon('download')}Cài đặt và khởi động lại</button>
+        </div>
+      </div>
+      <div class="details">
+        <span>Phiên bản hiện tại</span><b id="currentSoftwareVersion">—</b>
+        <span>Phiên bản mới</span><b id="availableSoftwareVersion">—</b>
+        <span>Trạng thái</span><b id="softwareUpdateStatus">—</b>
+      </div>
+      <div id="softwareUpdateProgressWrap" style="height:8px;margin-top:16px;border-radius:999px;overflow:hidden;background:var(--line)" hidden>
+        <div id="softwareUpdateProgress" style="height:100%;width:0;border-radius:inherit;background:var(--blue);transition:width .2s ease"></div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top:20px">
+      <div class="panelhead">
+        <div>
           <h2>Cấu hình ứng dụng</h2>
           <p class="muted">Tất cả giá trị cấu hình được hiển thị và lưu cục bộ trên máy này.</p>
         </div>
@@ -2281,6 +2306,45 @@ async function renderSettings() {
     </section>
   `;
 
+  const updateStatusLabels = {
+    idle: 'Sẵn sàng',
+    checking: 'Đang kiểm tra',
+    available: 'Có bản mới',
+    downloading: 'Đang tải',
+    downloaded: 'Sẵn sàng cài đặt',
+    'not-available': 'Đã cập nhật',
+    unsupported: 'Không hỗ trợ',
+    error: 'Có lỗi'
+  };
+  const renderSoftwareUpdateState = state => {
+    if (!$('#softwareUpdateMessage')) return;
+    $('#softwareUpdateMessage').textContent = state.message || '';
+    $('#currentSoftwareVersion').textContent = state.currentVersion || '—';
+    $('#availableSoftwareVersion').textContent = state.availableVersion || '—';
+    $('#softwareUpdateStatus').textContent = updateStatusLabels[state.status] || state.status || '—';
+    const busy = ['checking', 'available', 'downloading'].includes(state.status);
+    $('#checkSoftwareUpdate').disabled = busy || !desktopUpdater;
+    $('#installSoftwareUpdate').hidden = state.status !== 'downloaded';
+    $('#softwareUpdateProgressWrap').hidden = !['available', 'downloading', 'downloaded'].includes(state.status);
+    $('#softwareUpdateProgress').style.width = `${Math.max(0, Math.min(100, Number(state.percent) || 0))}%`;
+  };
+  renderSoftwareUpdateState(initialUpdateState);
+  if (updaterUnsubscribe) updaterUnsubscribe();
+  updaterUnsubscribe = desktopUpdater?.onStateChange(renderSoftwareUpdateState) || null;
+  $('#checkSoftwareUpdate').onclick = async () => {
+    try {
+      renderSoftwareUpdateState(await desktopUpdater.check());
+    } catch (error) {
+      toast(`Không thể kiểm tra cập nhật: ${error.message}`, true);
+    }
+  };
+  $('#installSoftwareUpdate').onclick = async () => {
+    const accepted = confirm('Cài đặt bản cập nhật và khởi động lại ứng dụng ngay bây giờ?');
+    if (!accepted) return;
+    const started = await desktopUpdater.install();
+    if (!started) toast('Bản cập nhật chưa sẵn sàng để cài đặt.', true);
+  };
+
   $('#copyRedirectUri').onclick = async () => {
     try {
       await navigator.clipboard.writeText($('#runtimeRedirectUri').value);
@@ -2298,7 +2362,8 @@ async function renderSettings() {
     ]],
     ['OpenAI', [
       ['OPENAI_API_KEY', 'API key', 'password'],
-      ['OPENAI_TEXT_MODEL', 'Model nội dung', 'text'],
+      ['OPENAI_TEXT_MODEL', 'Model viết nội dung', 'text'],
+      ['OPENAI_OCR_MODEL', 'Model đọc tài liệu OCR', 'text'],
       ['OPENAI_IMAGE_MODEL', 'Model hình ảnh', 'text']
     ]],
     ['Google', [

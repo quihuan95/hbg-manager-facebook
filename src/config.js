@@ -69,7 +69,8 @@ export const config = {
   // OpenAI
   openai: {
     apiKey: process.env.OPENAI_API_KEY || '',
-    textModel: process.env.TEXT_MODEL || process.env.OPENAI_TEXT_MODEL || 'gpt-4o-mini',
+    textModel: process.env.TEXT_MODEL || process.env.OPENAI_TEXT_MODEL || 'gpt-6.1-terra',
+    ocrModel: process.env.OCR_MODEL || process.env.OPENAI_OCR_MODEL || 'gpt-4o-mini',
     imageModel: process.env.IMAGE_MODEL || process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2'
   },
 

@@ -11,3 +11,14 @@ contextBridge.exposeInMainWorld('hbgWindowControls', {
     return () => ipcRenderer.removeListener('window:maximized', listener);
   }
 });
+
+contextBridge.exposeInMainWorld('hbgUpdater', {
+  getState: () => ipcRenderer.invoke('updater:get-state'),
+  check: () => ipcRenderer.invoke('updater:check'),
+  install: () => ipcRenderer.invoke('updater:install'),
+  onStateChange: callback => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('updater:state', listener);
+    return () => ipcRenderer.removeListener('updater:state', listener);
+  }
+});

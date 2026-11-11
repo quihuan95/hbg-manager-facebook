@@ -29,10 +29,16 @@ export function extractDriveId(value) {
 	return match[1];
 }
 
-export async function loadDriveImages(link, maxFiles = 10, { allowEmptyFolder = false } = {}) {
+export async function loadDriveImages(link, maxFiles = 10, { allowEmptyFolder = false, allowUnavailable = false } = {}) {
 	const id = extractDriveId(link);
 	if (!id) return [];
-	const metadata = await getFileMetadata(id);
+	let metadata;
+	try {
+		metadata = await getFileMetadata(id);
+	} catch (error) {
+		if (allowUnavailable && /Not Found|thùng rác/i.test(error.message)) return [];
+		throw error;
+	}
 	const isFolder = metadata.mimeType === FOLDER_MIME;
 	const files =
 		isFolder
@@ -107,7 +113,8 @@ export async function composeFrame(imageBuffer, frameBuffer) {
 
 export async function applyDriveFrame(imageData, frameLink) {
 	if (!String(frameLink || "").trim()) return imageData;
-	const [frame] = await loadDriveImages(frameLink, 1);
+	const [frame] = await loadDriveImages(frameLink, 1, { allowUnavailable: true });
+	if (!frame) return imageData;
 	const imageBuffer = readMediaBuffer(imageData);
 	if (!imageBuffer) throw new Error("Không đọc được ảnh cần lắp khung.");
 	const output = await composeFrame(imageBuffer, frame.buffer);

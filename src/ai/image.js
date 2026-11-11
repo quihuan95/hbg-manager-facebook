@@ -1,23 +1,35 @@
 import { config } from '../config.js';
 
 export async function planImageBriefs({ topic, caption, profileName, ruleText, customBrief = '', maxImages = 6 }) {
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.openai.apiKey}` },
     body: JSON.stringify({
-      model: config.openai.textModel || 'gpt-4o-mini',
-      response_format: { type: 'json_object' },
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: `Analyze a social post and decide which distinct ideas genuinely need visual explanation. Return JSON {"briefs":["..."]}. Use 1 to ${maxImages} concise, standalone commercial image briefs. Do not create redundant decorative images or invent facts. Apply this optional visual direction to every relevant brief: ${customBrief || 'none'}. Follow these brand rules:\n${ruleText}` },
-        { role: 'user', content: `Brand: ${profileName}\nTopic: ${topic}\nPost:\n${caption}` }
-      ]
+      model: config.openai.textModel || 'gpt-6.1-terra',
+      instructions: `Analyze a social post and decide which distinct ideas genuinely need visual explanation. Use 1 to ${maxImages} concise, standalone commercial image briefs. Do not create redundant decorative images or invent facts. Apply this optional visual direction to every relevant brief: ${customBrief || 'none'}. Follow these brand rules:\n${ruleText}`,
+      input: `Brand: ${profileName}\nTopic: ${topic}\nPost:\n${caption}`,
+      reasoning: { effort: 'none' },
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'image_briefs',
+          strict: true,
+          schema: {
+            type: 'object',
+            properties: { briefs: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: maxImages } },
+            required: ['briefs'],
+            additionalProperties: false
+          }
+        }
+      },
+      max_output_tokens: 1200
     })
   });
   if (!res.ok) throw new Error(`Không thể phân tích số lượng ảnh cần tạo: ${res.statusText}`);
   const data = await res.json();
+  const rawContent = (data.output || []).flatMap(item => item.content || []).filter(item => item.type === 'output_text').map(item => item.text || '').join('\n');
   let parsed = {};
-  try { parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}'); } catch {}
+  try { parsed = JSON.parse(rawContent || '{}'); } catch {}
   const briefs = Array.isArray(parsed.briefs) ? parsed.briefs.map(String).map(value => value.trim()).filter(Boolean).slice(0, maxImages) : [];
   return briefs.length ? briefs : [`Minh họa chuyên nghiệp cho chủ đề: ${topic}`];
 }

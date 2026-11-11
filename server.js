@@ -186,9 +186,10 @@ const server = http.createServer(async (req, res) => {
             openai: {
               configured: isOpenAiConfigured,
               textModel: config.openai.textModel,
+              ocrModel: config.openai.ocrModel,
               imageModel: config.openai.imageModel,
               detail: isOpenAiConfigured
-                ? `Đã kết nối (${config.openai.textModel} / ${config.openai.imageModel})`
+                ? `Đã kết nối (viết: ${config.openai.textModel} / OCR: ${config.openai.ocrModel} / ảnh: ${config.openai.imageModel})`
                 : 'Chưa cấu hình OPENAI_API_KEY trong .env'
             },
             googleDrive: {
@@ -586,7 +587,7 @@ const server = http.createServer(async (req, res) => {
                 post.sheet_image_rule && `Ưu tiên 2 — Rule ảnh từ Sheet: ${post.sheet_image_rule}`
               ].filter(Boolean).join('\n\n')
             : (post.image_brief || post.sheet_image_rule || '');
-          const referenceImages = await loadDriveImages(post.source_image_drive_link, 10, { allowEmptyFolder: true });
+          const referenceImages = await loadDriveImages(post.source_image_drive_link, 10, { allowEmptyFolder: true, allowUnavailable: true });
           const briefs = referenceImages.length
             ? referenceImages.map((source, index) => effectiveImageBrief || `Tạo ảnh minh họa số ${index + 1} cho bài viết dựa sát trên ảnh nguồn này.`)
             : await planImageBriefs({ topic: post.topic_title, caption: post.caption, profileName: post.profile_name, ruleText: rule?.content_markdown || '', customBrief: effectiveImageBrief });
@@ -630,7 +631,7 @@ const server = http.createServer(async (req, res) => {
         updatePostStatus(postId, 'GENERATING');
         try {
           const sourceImages = imageSet[imageIndex].sourceFileId
-            ? await loadDriveImages(imageSet[imageIndex].sourceFileId, 1)
+            ? await loadDriveImages(imageSet[imageIndex].sourceFileId, 1, { allowUnavailable: true })
             : [];
           const generated = await generateImage(post.topic_title, post.profile_name, rule?.content_markdown || '', brief, sourceImages);
           generated.imageData = await applyProfileLogo(generated.imageData, post.logo_data);
@@ -828,7 +829,7 @@ server.listen(config.port, '127.0.0.1', () => {
   console.log(`👉 Database: ${config.dbPath}`);
   console.log(`👉 Google Redirect URI: ${config.google.redirectUri}`);
   console.log(`👉 Mode: ${config.publishMode.toUpperCase()} (Manual Upload)`);
-  console.log(`👉 OpenAI: ${config.openai.textModel} / ${config.openai.imageModel}`);
+  console.log(`👉 OpenAI: viết ${config.openai.textModel} / OCR ${config.openai.ocrModel} / ảnh ${config.openai.imageModel}`);
   console.log(`====================================================`);
 
   if (config.automation.enabled) {

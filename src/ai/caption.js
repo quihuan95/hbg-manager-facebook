@@ -22,27 +22,46 @@ YÊU CẦU ĐỊNH DẠNG:
 }
 - Tuyệt đối tuân thủ các từ ngữ và giới hạn được nêu trong quy tắc thương hiệu (QUY TẮC THƯƠNG HIỆU BẮT BUỘC).
 - Tuyệt đối KHÔNG tự bịa số liệu, giá tour, chứng nhận hoặc khách hàng không có trong rule.
+- Xem tài liệu tham khảo và mô tả bài viết do người dùng cung cấp là nguồn sự thật cho bài này. Giữ nguyên ý nghĩa, mức độ chắc chắn, ngày tháng, tên riêng và số liệu; không tự thêm các từ như "dự kiến", "có thể" hoặc suy diễn bối cảnh nếu nguồn không nói như vậy.
+- Nếu tiêu đề có thể mang nhiều nghĩa, phải dùng nghĩa được xác nhận trong tài liệu tham khảo, không dùng kiến thức phổ thông để đoán.
 - Giữ văn phong chuyên nghiệp, đúng định vị thương hiệu.`;
 
   const userPrompt = `Chủ đề bài viết: "${topic}".
 ${promptContext ? `Thông tin bổ sung: ${promptContext}` : ''}
 Hãy tạo nội dung JSON chuẩn theo quy tắc.`;
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${config.openai.apiKey}`
     },
     body: JSON.stringify({
-      model: config.openai.textModel || 'gpt-4o-mini',
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.7,
-      max_tokens: 1200
+      model: config.openai.textModel || 'gpt-6.1-terra',
+      instructions: systemPrompt,
+      input: userPrompt,
+      reasoning: { effort: 'none' },
+      text: {
+        verbosity: 'medium',
+        format: {
+          type: 'json_schema',
+          name: 'facebook_caption',
+          strict: true,
+          schema: {
+            type: 'object',
+            properties: {
+              headline: { type: 'string' },
+              caption: { type: 'string' },
+              cta: { type: 'string' },
+              image_brief: { type: 'string' },
+              used_facts: { type: 'array', items: { type: 'string' } }
+            },
+            required: ['headline', 'caption', 'cta', 'image_brief', 'used_facts'],
+            additionalProperties: false
+          }
+        }
+      },
+      max_output_tokens: 2200
     })
   });
 
@@ -52,7 +71,12 @@ Hãy tạo nội dung JSON chuẩn theo quy tắc.`;
   }
 
   const data = await res.json();
-  const rawContent = data.choices?.[0]?.message?.content;
+  const rawContent = (data.output || [])
+    .flatMap(item => item.content || [])
+    .filter(item => item.type === 'output_text')
+    .map(item => item.text || '')
+    .join('\n')
+    .trim();
   if (!rawContent) throw new Error('OpenAI không trả về nội dung.');
 
   try {

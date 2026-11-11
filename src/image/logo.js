@@ -1,9 +1,19 @@
 import sharp from 'sharp';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { readMediaBuffer } from '../media.js';
+
+const DEFAULT_LOGO_PATH = fileURLToPath(new URL('../../dist/assets/the-hbg-logo.png', import.meta.url));
+
+function getLogoBuffer(logoData) {
+  const profileLogo = readMediaBuffer(logoData);
+  if (profileLogo) return profileLogo;
+  return fs.existsSync(DEFAULT_LOGO_PATH) ? fs.readFileSync(DEFAULT_LOGO_PATH) : null;
+}
 
 export async function applyProfileLogo(imageData, logoData) {
   const imageBuffer = readMediaBuffer(imageData);
-  const logoBuffer = readMediaBuffer(logoData);
+  const logoBuffer = getLogoBuffer(logoData);
   if (!imageBuffer || !logoBuffer) return imageData;
 
   const image = sharp(imageBuffer);
